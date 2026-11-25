@@ -1,0 +1,1282 @@
+---
+title: "Variant Dynamic Plots"
+author: "Nathan K Smith"
+date: "`r format(Sys.Date(),'%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+---
+
+```{r, setup, echo=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE, 
+  comment = "", 
+  echo = FALSE,
+  message = FALSE
+)
+```
+
+```{r, load_data, include=FALSE}
+#-- setup code
+
+# libraries
+listlibraries <- c("plyr", "tidyverse", "scales", "gridExtra", "RColorBrewer", "lubridate", "viridis", "cowplot", "data.table", "ggnewscale", "DT", "patchwork")
+
+invisible(lapply(listlibraries, library, character.only = TRUE))
+
+# Load data
+load("../../data/VOC_global_v4.RData")
+
+# Load functions
+source("catHeader.R")
+```
+
+# Figure 1 - World Variant Dynamic Plot
+
+- The top plot separates the VOCs by plotting the product of the VOC proportion (of sequences) and total weekly cases.
+- The bottom plot illustrates total case counts filled in with the proportion of VOC sequences. 
+
+```{r, data-prep}
+# getting population to standardize scale of plots------------------------------
+BA1BA2 <- read.csv("../../data/42countriesBA1BA2_March_14.csv")
+for_pop <- read.csv(unz("../../data/covid_processed_v10_march14.zip", "df_ver_10_March_14.csv"))
+
+relsize <- BA1BA2 %>% # this file may need to be updated.
+  select(country, relsize) %>%
+  rename(location = country) %>% 
+  unique() %>% 
+  mutate(location = ifelse(location == "United States","USA",location))
+
+owid_data_w <- left_join(owid_data_w, relsize, by = "location")
+
+population <- for_pop %>% 
+  select(country, population) %>% # also grabbing outcome variable, relsize
+  rename(location = country) %>% 
+  unique() %>% 
+  mutate(location = ifelse(location == "United States","USA",location))
+
+owid_data_w <- left_join(owid_data_w, population, by = "location")
+
+# this code grabs the population size and outcome variable for the 42 countries, and adds them to owid_data_w
+# I could probably integrate this into the very first data processing step rather than here. If I do it there, would be better to make a separate variable rather than overwrite the main var. 
+# data prep --------------------------------------------------------------------
+mindate <- min(owid_data_w %>% pull(week))
+
+dfplot <- (gisaid_data_w
+	|> group_by(week,VOC,location)
+	|> summarise(proportion = sum(proportion,na.rm=TRUE))
+	|> full_join(owid_data_w)
+	|> select(-weekly_cases)
+	|> full_join(diversity_df)
+	|> mutate(sequenc_eff = if_else(is.infinite(sequenc_eff), NA, if_else(sequenc_eff>1, 1, sequenc_eff))) # remove infinite values and artefactual values above 1
+	|> filter(week > mindate)
+	|> mutate(mult = weekly_cases*proportion)
+	|> mutate(mult_pop =(mult/population) * 100000,
+	          weekly_cases_pop = (weekly_cases/population)*100000
+	          )
+)
+
+# quick check for Slovakia where in early 2021 the fill is outside of the case line:
+# Slovakia_dfplot <- dfplot %>% filter(location=="Slovakia" & week>"2021-01-01")
+# Slovakia_dfplot1 <- Slovakia_dfplot %>% group_by(week) %>% summarize(proportionsum = sum(proportion, na.rm=TRUE))
+# Slovakia_dfplot2 <- Slovakia_dfplot %>% group_by(week) %>% summarize(multsum = sum(mult_pop, na.rm=TRUE)) 
+# So I’ve confirmed that the early 2021 proportions sum equal 1, and that the sum of mult_pop equals weekly_cases_pop for Slovakia. So this appears to be a graphical glitch? Not sure how to remedy. 
+# I was having a similar graphical issue with smoothed bar graphs. unsmoothed did not exceed 1, but smoothed did. 
+```
+
+
+```{r, Figure-1}
+order <- c("wildtype A*", "wildtype B*", "Alpha*", "Beta", "Gamma", "Delta*", "Epsilon", "Eta", "Iota", "Kappa", "Lambda", "Mu", "Omicron BA.1*", "Omicron BA.2*", "Omicron BA.2.75*", "Omicron BA.4*", "Omicron BA.5*", "Omicron BQ.*", "Recombinants", "Unassigned", "XBB*", "XBB.1.5", "other")
+
+# set VOC to factor so ensure correct stacking order
+dfplot$VOC <- factor(dfplot$VOC, levels = order)
+
+p <- dfplot %>% 
+  filter(location == "World") %>% # couldn't wrap ggplot code in parentheses when piping in this filter
+  ggplot(aes(x = week)) +
+  geom_area(aes(y=mult,fill=VOC),alpha = 0.75, position = "identity") +
+  scale_fill_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = "World")+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = c(0.23,0.605)
+			, axis.text = element_text(size = 10)
+    ) +
+	scale_y_continuous(name = "Weekly Cases (VOC-Specific)", labels = comma)
+
+
+print(p)
+
+ggsave("../../results/figures/World_voc_cases_feb23.png",width = 8,height = 5)
+
+# This code generates a VOC-specific wave dynamics plot for the world. This plots the estimated VOC-specific cases (product of total cases and VOC proportion). This should result in separate overlapping waves for each VOC.
+
+# Plot 2: Case waves filled by VOC proportion-----------------------------------
+p2 <- (p
+	+ geom_area(aes(y = mult, fill = VOC)) 
+	+ geom_line(aes(y = weekly_cases), size = 0.7) 
+   + scale_y_continuous(name = "Weekly Cases (Total)", labels = comma)
+)
+
+print(p2) 
+
+ggsave("../../results/figures/World_cases_filled_feb23.png",width = 8,height = 5)
+
+# This code generates a combined case wave dynamics plot for the world. This plots the total cases and fills the area with the proportion of each VOC. This should result in one continuous line for cases with proportions shaded underneath.
+
+# S curve plot -----------------------------------------------------------------
+
+
+p3 <- dfplot %>% 
+  filter(location == "World") %>% # couldn't wrap ggplot code in parentheses when piping in this filter
+  ggplot() +
+  geom_line(aes(x = week, y = proportion, group = VOC, color = VOC), size = 1.3)+
+  scale_colour_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = "World")+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = "none"
+			, axis.text = element_text(size = 10)
+    ) +
+	scale_y_continuous(name = "Proportions")
+
+print(p3)
+```
+
+```{r}
+# Combining Fig 1 images--------------------------------------------------------
+
+# creating legend ------------------------------------------------------------
+legend <- get_legend(p)
+grid.arrange(legend)# this wont save as an image. Not sure how to save a copy of this by itself
+
+# Modifying individual plots --------------------------------------------------
+
+## Total case plot
+p2 <- p2 + theme(
+  legend.position="none", 
+  axis.text.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  plot.title = element_blank(), 
+  plot.margin = margin(0, 0, 0.2, 0, "cm")
+  ) +
+  scale_y_continuous(name = "Total Cases", labels = comma)
+
+## Proportion plot
+p3 <- p3 + theme(
+  legend.position="none", 
+  axis.text.x = element_blank(), 
+  axis.ticks.x = element_blank(),
+  plot.title = element_blank(), 
+  plot.margin = margin(0, 0, 0.1, 0, "cm")
+  )
+
+## Cases per VOC plot
+p <- p+ theme(
+  legend.position="none", 
+  plot.title = element_blank(), 
+  plot.margin = margin(0, 0, 0.1, 0, "cm")
+  )+
+  scale_y_continuous(name = "Cases per VOC", labels = comma)
+
+# Combining --------------------------------------------------------------------
+p4 <- (p2 / p3 / p / plot_layout(axes = "collect")) 
+p4
+
+ggsave("../../results/figures/Figure1_feb23.png",width = 7,height = 5)
+```
+
+# Figure 2 - Comparison of Different BA.1/BA.2 Dynamics {.tabset}
+
+From Jessica's "Dataset42_create.Rmd" in /Hackathon:
+"Final data point selected as the first epi week in which >10% of cases were the variant we are trying to predict (see name printed below, cases as inferred from GISAID sequence proportions). 42 countries are included: countries that have greater than 10 sequences per week between June 01 2021 to June 01 2022, minus India and Singapore who did not have workable Delta/BA.1/BA.2 periods."
+
+These plots show the overlapping VOC waves rather than the total case wave with shaded proportions. This better reflects the variables used to create the outcome variable for the predictive models, relsize, defined as the ratio of the maximum BA.1 cases to the maximum BA.2 cases (not the maximum cases for the majority BA.1/BA.2 waves, as identified in my wave metrics dataframe). 
+
+- We want to compare four different categories: 1) No wave, 2) Smaller BA.2 Wave, 3) Larger BA.2 wave, 4) covid-zero policy (e.g., S.Korea)
+        
+The following criteria were used to create groups (only focusing on the top 42 countries)
+
+- larger_BA2: relsize > 1.1
+- smaller_BA2: relsize >= 0.05 & relsize < 0.9
+- no_BA2: relsize <0.05
+    - this identifies countries with no identifiable BA.2 wave on the plot. Increasing this threshold to <0.1 additionally identified Argentina and Mexico, though both of these show a small bump for the BA.2 wave. 
+- equal_BA2: relsize >= 0.9 & relsize <= 1.1
+- high_stringency_sept21: week>"2021-09-01" & stringency_index >70
+    - date arbitrarily chosen to roughly capture BA.1 introduction
+    - Using stringency_index >80 results in no hits
+- high_stringency_ever: stringency_index >90
+    - Argentina only country to ever have a stringency index of 100 (out of the 42 countries)
+
+
+Interestingly South Korea doesn't show up by using the stringency index cut points despite being suggested as a covid-zero policy example
+
+Stringency Index Info:
+https://ourworldindata.org/metrics-explained-covid19-stringency-index
+
+```{r, prediction-dates}
+# Generate prediction dates for BA.1 and BA.2:
+
+# List of countries:
+my_regions <- relsize$location
+
+my_regions <- append(my_regions, c("India", "Singapore")) # note, missing population so need to drop the standardizing line from the plotting code for these to run (or grab these numbers from elsewhere)
+
+# Start and end dates
+mindate <- "2021-03-01"
+maxepidate <- "2022-04-01"
+
+# Variant to generate for predicting
+BA1 <- "Omicron BA.1*"
+BA2 <- "Omicron BA.2*"
+
+# this function finds the first week where the VOC proportion exceeds a specified proportion 
+voc_first <- function(data_dates,data_voc,data_prop,voc,prop,return_date=FALSE){
+	dat <- data.frame(week=data_dates, VOC=data_voc, proportion=data_prop)
+	dd <- filter(dat,VOC==voc,proportion>prop)
+	if(return_date){return(pull(dd,week))}
+	
+	firstdate <- pull(dd,week)
+	if(length(firstdate)==0){return(NA)}
+	return(min(firstdate))
+}
+
+## MLi: I don't like this but it is still better than before
+## Refactor me in the future!!!
+dfplot <- (dfplot
+	%>% ungroup()
+	%>% group_by(location)
+	%>% mutate(BA1_end = voc_first(week,VOC,proportion,voc=BA1,prop=0.1)
+		, BA1_wk4 = BA1_end - 7
+		, BA1_wk3 = BA1_end - 14
+		, BA1_wk2 = BA1_end - 21
+		, BA1_wk1 = BA1_end - 28
+		, BA2_end = voc_first(week,VOC,proportion,voc=BA2,prop=0.1)
+		, BA2_wk4 = BA2_end - 7
+		, BA2_wk3 = BA2_end - 14
+		, BA2_wk2 = BA2_end - 21
+		, BA2_wk1 = BA2_end - 28
+	)
+)
+# This code creates new dataframes with the fitting window dates for BA.1 and BA.2. The week at which the respective VOC passes 10%, and 4 weeks prior to this date. 
+
+# save a copy of all dates per country for Shab:
+fitting_dates <- dfplot %>% 
+  select(location, BA1_wk1, BA1_wk2, BA1_wk3, BA1_wk4, BA1_end, BA2_wk1, BA2_wk2, BA2_wk3, BA2_wk4, BA2_end) %>%
+  unique()
+save(fitting_dates, file = "../../data/fitting_dates.Rmd")
+  
+```
+
+```{r, generate_pulldates}
+# generating df for GISAID pulldates (to grab sequences for calculating genetic distance)
+
+# BA.1
+BA1_pull_dates <- dfplot %>% 
+  select(location, BA1_end, BA1_wk1) %>% 
+  filter(location %in% my_regions) %>% 
+  unique() 
+save(BA1_pull_dates, file = "../../data/BA1_pull_dates.RData")
+
+# BA.2 
+BA2_pull_dates <- dfplot %>% 
+  select(location, BA2_end, BA2_wk1) %>% 
+  filter(location %in% my_regions) %>% 
+  unique() 
+save(BA2_pull_dates, file = "../../data/BA2_pull_dates.RData")
+
+# looking at differences between BA.1 and BA.2 t_0
+all_pull_dates <- full_join(BA1_pull_dates, BA2_pull_dates) %>% 
+  mutate(t0_diff = BA2_end-BA1_end)
+```
+
+```{r, categorize-countries, include=FALSE}
+# function to create vectors of countries meeting certain conditions
+filter_country <- function(data, condition) {
+  data %>%
+    filter({{condition}}) %>% # curly brackets needed to tell R to look for condition in the dataframe rather than the global environment
+    pull(location) %>%
+    unique()
+}
+
+larger_BA2 <- filter_country(owid_data_w, relsize > 1.1)
+smaller_BA2 <- filter_country(owid_data_w, relsize >= 0.05 & relsize < 0.9)
+equal_BA2 <- filter_country(owid_data_w, relsize >= 0.9 & relsize <= 1.1)
+no_BA2 <- filter_country(owid_data_w, relsize < 0.05)
+high_stringency_sept21 <- filter_country(owid_data_w, (week>"2021-09-01" & location %in% my_regions & stringency_index >70)) # above 80 gets no hits
+high_stringency_ever <- filter_country(owid_data_w, (location %in% my_regions & stringency_index >90))
+
+# note: Argentina only country to ever have a stringency index of 100
+
+# This code creates groups of countries and saves the names of the countries in separate vectors for use in the plotting loops below
+```
+
+```{r, plot-function}
+# Setting plotting function (needed for create function for secondary y axis to apply properly)
+
+vdplot <- function(location, dfplot, stacked = "no", labels = "no") {
+  # Subset data by region
+  region_dfplot <- dfplot[dfplot$location == location, ]
+
+  # choose time duration of plot
+  mindate <- "2021-10-27" # chosen based on epiweeks so the data doesn't look strangely truncated
+  maxepidate <- "2022-07-09"
+  
+  # df for peaks
+  df_max <- region_dfplot %>% group_by(VOC) %>% slice(which.max(mult_pop)) %>% filter(VOC %in% c("Omicron BA.1*", "Omicron BA.2*"))
+  
+  # Scaling factor for secondary y axis (maximum y value on plot)
+  scaling_factor <- df_max[[1,"mult_pop"]]
+  
+  # df for BA.2 metrics 
+  df_max_variant <- df_max[df_max$VOC == "Omicron BA.2*", ]
+
+  # Plotting:
+  # note, alpha isnt working with geom_segment, but appears work with annotate. 
+  p <- ggplot(data = region_dfplot) + 
+    geom_area(aes(x = as.Date(week), 
+                  y = mult_pop, 
+                  fill = VOC),alpha = 0.7, 
+              position = "identity")+
+    scale_fill_manual(breaks = c("Delta*", "Omicron BA.1*", "Omicron BA.2*", "Omicron BA.5*"), 
+                      values = pal) +
+    labs(x = NULL,title = location) +
+    theme_bw()+
+    theme(legend.text = element_text(size = 7)
+			, legend.position = c(0.85,0.7)
+			, axis.text = element_text(size = 10)
+    ) +
+    scale_y_continuous(name = "VOC Cases per 100,000 Population", 
+                       labels = comma, 
+                       sec.axis = sec_axis(~ . / scaling_factor, 
+                                           name = "Relative Size")) + 
+    scale_x_date(date_breaks = "2 months", 
+                 date_labels = "%b %Y",
+                 limits = c(as.Date(mindate), as.Date(maxepidate)))
+  
+  # Add annotation layer if labels = "yes"
+  if (labels == "yes") {
+    p <- p + 
+      annotate("text", # Label BA.2 peak time
+                      x = df_max_variant$week, 
+                      y = 0-(0.1*scaling_factor), 
+                      label = "t_maxpeak", 
+                      alpha = 0.8)+
+      annotate("text", # Label when BA.2 exceeds 10% of sequences: t_0
+             x = df_max_variant$BA2_end,
+             y = 0-(0.1*scaling_factor),
+             label = "t_0",
+             alpha = 0.8)  +
+      annotate("text", # Label the start of the fitting window : t_pred
+             x = df_max_variant$BA2_wk1,
+             y = 0-(0.1*scaling_factor),
+             label = "t_pred",
+             alpha = 0.8)
+  }
+  # plot stacked VOCs under total cases if stacked = "yes"
+   if (stacked == "yes") {
+    p <- p + 
+      geom_area(aes(x=week, y = mult_pop, fill = VOC))+
+      geom_line(aes(x=week, y = weekly_cases_pop), size = 0.75) +
+      scale_y_continuous(name = "Cases Per 100,000 Population (Total)", labels = comma)
+  }
+  
+  p <- p +
+    geom_point(data = df_max, # BA.1 and BA.2 peaks
+               aes(x = week, y = mult_pop), 
+               show.legend=FALSE) +
+    annotate("segment", # Tick for BA.2 peak
+             x = df_max_variant$week, 
+             xend = df_max_variant$week, 
+             y = 0-(0.05*scaling_factor), 
+             yend = (0.05*scaling_factor), 
+             alpha = 0.3) +
+    annotate("segment", # Tick for t_0
+             x = df_max_variant$BA2_end, 
+             xend = df_max_variant$BA2_end, 
+             y = 0-(0.05*scaling_factor), 
+             yend = (0.05*scaling_factor), 
+             alpha = 0.3) +
+    annotate("segment", # Tick for t_pred
+             x = df_max_variant$BA2_wk1, 
+             xend = df_max_variant$BA2_wk1, 
+             y = 0-(0.05*scaling_factor), 
+             yend = (0.05*scaling_factor), 
+             alpha = 0.3)+
+    annotate("rect", # Shaded rectangle for fitting window
+         xmin = df_max_variant$BA2_wk1, 
+         xmax = df_max_variant$BA2_end, 
+         ymin = 0, 
+         ymax = max(df_max$mult_pop), 
+         fill = "black", 
+         alpha = 0.3)
+return(p)
+}
+
+# This function should create zoomed in plots of the BA.1 - BA.2 (date range should accomodate all countries). optional commands determine whether to label the fitting window (t_pred to t_0) and the BA.2 peak, and whether the create stacked or separated VOC waves. 
+```
+
+# Larger BA2 {.tabset}
+
+relsize > 1.1
+
+```{r, larger-BA2, results = "asis"}
+plots1 <- list() # create empty list to store plots
+
+for (location in larger_BA2){
+  p <- vdplot(location, dfplot, labels = "yes")
+ plots1[[location]] <- p 
+}
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in larger_BA2) {
+  pl_list[[location]] <- list(plots1[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in larger_BA2) {
+  tmp <- pl_list[[location]]
+  catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+```
+
+
+# Smaller BA2 {.tabset}
+
+relsize >= 0.05 & relsize < 0.9
+
+```{r, smaller-BA2, results = "asis"}
+plots2 <- list() # create empty list to store plots
+
+for (location in smaller_BA2){
+  p <- vdplot(location, dfplot, labels = "yes")
+ plots2[[location]] <- p 
+}
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in smaller_BA2) {
+  pl_list[[location]] <- list(plots2[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in smaller_BA2) {
+  tmp <- pl_list[[location]]
+  catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+# this code chunk creates a dynamic tabset for a knit html
+```
+
+# No BA2 {.tabset}
+
+relsize <0.05
+
+```{r, no-BA2, results = "asis"}
+plots3 <- list() # create empty list to store plots
+
+for (location in no_BA2){
+  p <- vdplot(location, dfplot, labels = "yes")
+ plots3[[location]] <- p 
+}
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in no_BA2) {
+  pl_list[[location]] <- list(plots3[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in no_BA2) {
+  tmp <- pl_list[[location]]
+  catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+```
+
+```{r}
+# hotfix for BA.2 peak in Peru
+peru <- dfplot %>% 
+  filter(location=="Peru" & VOC=="Omicron BA.2*")
+
+view(peru)
+
+dfplot <- dfplot %>% 
+  mutate(mult_pop = if_else(location=="Peru" & week=="2022-05-22" & VOC == "Omicron BA.2*", 20.7, mult_pop))
+  
+```
+
+# Equal BA2 {.tabset}
+
+relsize >= 0.9 & relsize <= 1.1
+
+```{r, equal-BA2, results = "asis"}
+plots4 <- list() # create empty list to store plots
+
+for (location in equal_BA2){
+  p <- vdplot(location, dfplot, labels = "yes")
+ plots4[[location]] <- p 
+}
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in equal_BA2) {
+  pl_list[[location]] <- list(plots4[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in equal_BA2) {
+  tmp <- pl_list[[location]]
+  catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+```
+
+# Stringency Index > 90 (Ever) {.tabset}
+```{r, high-stringency-ever, results = "asis"}
+plots5 <- list() # create empty list to store plots
+
+for (location in high_stringency_ever){
+  p <- vdplot(location, dfplot, labels = "yes")
+ plots5[[location]] <- p 
+}
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in high_stringency_ever) {
+  pl_list[[location]] <- list(plots5[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in high_stringency_ever) {
+  tmp <- pl_list[[location]]
+  catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+```
+
+# Stringency Index > 70 (After Sept. 2021) {.tabset}
+```{r, high-stringency-sept21, results = "asis"}
+plots6 <- list() # create empty list to store plots
+
+for (location in high_stringency_sept21){
+  p <- vdplot(location, dfplot, labels = "yes")
+ plots6[[location]] <- p 
+}
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in high_stringency_sept21) {
+  pl_list[[location]] <- list(plots6[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in high_stringency_sept21) {
+  tmp <- pl_list[[location]]
+  catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+```
+
+# Combining Plots for Figure 2
+
+```{r, combined-plots-VOC}
+# recreating plots with no labels for figure 2 ---------------------------------
+
+fig_2_plots <- list() # create empty list to store plots
+
+fig_2_locations <- c("Canada", "Peru", "Thailand", "Sweden")
+for (location in fig_2_locations){
+  p <- vdplot(location, dfplot)
+  p <- p +   theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  ) 
+ fig_2_plots[[location]] <- p 
+}
+
+# creating legends ------------------------------------------------------------
+legend_v <- get_legend(fig_2_plots$Canada) # grabbing a legend
+Canada <- fig_2_plots$Canada+ theme(legend.title = element_blank(), legend.text = element_text(size = 7), legend.position = "bottom")
+legend_h <- get_legend(Canada)
+
+# Modifying individual plots --------------------------------------------------
+## Smaller BA.2 - Canada or France. For different timing of t_pred, see Indonesia or Luxembourg
+Canada <- fig_2_plots[["Canada"]] + 
+  labs(title = "Smaller BA.2 (Canada)")+
+  theme(
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(), 
+  )
+
+## No BA.2 - Peru or Columbia
+Peru <- fig_2_plots[["Peru"]] + 
+  labs(title = "No BA.2 (Peru)")
+
+## Larger BA.2 - Germany or Thailand
+Thailand <- fig_2_plots[["Thailand"]] + 
+  labs(title = "Larger BA.2 (Thailand)")+
+  theme(
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(), 
+  )
+ 
+## Equal BA.2 - Sweden
+Sweden <- fig_2_plots[["Sweden"]] + 
+  labs(title = "Equal BA.2 (Sweden)")+
+  theme(
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  )
+
+# Combining --------------------------------------------------------------------
+p1 <- (Sweden / Thailand / Canada / Peru + plot_layout(axes = "collect_y")) / legend_h + plot_layout(heights = c(1,1,1,1, 0.3))
+p1
+ggsave("../../results/figures/Figure_2_v1.png",width = 7,height = 5)
+
+#(Canada / Peru / Thailand / Sweden + plot_layout(axes = "collect_y"))
+```
+
+```{r, combined-plots-stacked}
+fig_2_plots_stacked <- list() # create empty list to store plots
+
+fig_2_locations <- c("Canada", "Peru", "Thailand", "Sweden")
+for (location in fig_2_locations){
+  p <- vdplot(location, dfplot, stacked = "yes" )
+  p <- p +  theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0.2, 0, 0, "cm")
+  ) 
+ fig_2_plots_stacked[[location]] <- p 
+}
+
+# Modifying individual plots --------------------------------------------------
+## Smaller BA.2 - Canada or France. For different timing of t_pred, see Indonesia or Luxembourg
+Canada_s <- fig_2_plots_stacked[["Canada"]] + 
+  labs(title = "Smaller BA.2 (Canada)")+
+  theme(
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(), 
+  )
+
+## No BA.2 - Peru or Columbia
+Peru_s <- fig_2_plots_stacked[["Peru"]] + 
+  labs(title = "No BA.2 (Peru)")
+  
+## Larger BA.2 - Germany or Thailand
+Thailand_s <- fig_2_plots_stacked[["Thailand"]] +
+  labs(title = "Larger BA.2 (Thailand)")+
+  theme(
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(), 
+  )
+
+## Equal BA.2 - Sweden
+Sweden_s <- fig_2_plots_stacked[["Sweden"]] + 
+  labs(title = "Equal BA.2 (Sweden)")+
+  theme(
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  )
+
+# Combining --------------------------------------------------------------------
+p2 <- (Sweden_s / Thailand_s / Canada_s / Peru_s + plot_layout(axes = "collect_y")) / legend_h + plot_layout(heights = c(1,1,1,1, 0.3))
+p2
+ggsave("../../results/figures/Figure_2_stacked.png",width = 7,height = 5)
+
+p3 <- (((Sweden_s / Thailand_s / Canada_s / Peru_s + plot_layout(axes = "collect_y")) | (Sweden / Thailand / Canada / Peru + plot_layout(axes = "collect_y")))/legend_h) + plot_layout(heights = c(1,0.1))
+p3
+ggsave("../../results/figures/Figure_2_combined.png",width = 10.5,height = 5)
+```
+
+# Supplementary Figures
+
+## BA.2/BA.1
+```{r, supp-figs-BA2}
+# recreating plots with no labels for figure 2 ---------------------------------
+
+# v3 is missing Puerto Rico
+my_regions <- my_regions[my_regions != "Puerto Rico"]
+
+for (location in my_regions){
+  p <- vdplot(location, dfplot)
+  p <- p + theme(
+  legend.position="none",
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99),
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  )
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# whatever country is at the bottom will have to be redone to have the x axis
+
+for (location in c("Romania", "Thailand", "Slovenia", "Peru")){
+  p <- vdplot(location, dfplot)
+  p <- p + theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  ) 
+ location_name <- gsub(" ", "_", location)
+ assign(location_name, p, envir = .GlobalEnv)
+}
+
+# See the order I need:
+BA2_pull_dates %>% arrange(BA2_end) # note, Puerto Rico has dates because it's based on the gisaid data only
+
+#Part 1:
+p4 <- India / Denmark / South_Africa / Norway / Singapore / Sweden / Austria / Malaysia / Belgium / Germany / Romania + 
+  plot_layout(axes = "collect_y") | 
+  Finland / Indonesia / Ireland / Israel / Netherlands / Poland / Russia / South_Korea / United_Kingdom / France / Thailand +
+  plot_layout(axes = "collect_y")
+
+p4
+ggsave("../../results/figures/Supp_Fig_1_BA2.png",width = 10,height = 10)
+
+#Part 2:
+p5 <- Australia / Bulgaria / Croatia / Luxembourg / Portugal / Slovakia / Spain / Switzerland / Canada / Italy / Slovenia + 
+  plot_layout(axes = "collect_y") |
+  Costa_Rica / Japan / Panama/ USA / Brazil / Chile / Colombia / Mexico / Argentina / Peru / plot_spacer() + 
+  plot_layout(axes = "collect_y")
+
+p5
+ggsave("../../results/figures/Supp_Fig_2_BA2.png",width = 10,height = 10)
+
+# Will need to add BA.4 to legend for South Africa. Looks like recombinant in Panama?
+test <- dfplot %>% filter(VOC=="Recombinants" & location=="Panama")
+# confirmed recombinant
+
+SA <- South_Africa+
+    scale_fill_manual(breaks = c("Delta*", "Omicron BA.4*", "Omicron BA.1*", "Omicron BA.5*", "Omicron BA.2*", "Recombinants"), 
+                      values = pal)+
+  theme(legend.position = "bottom")
+
+SA
+ggsave("../../results/figures/for_legend.png",width = 10.5,height = 5)
+```
+
+# BA.1/Delta
+```{r, plot-function2}
+# Plot function for Delta/BA.1 figs
+
+vdplot2 <- function(location, dfplot, stacked = "no", labels = "no") {
+  # Subset data by region
+  region_dfplot <- dfplot[dfplot$location == location, ]
+
+  # choose time duration of plot
+  mindate <- "2021-03-27" # chosen based on epiweeks so the data doesn't look strangely truncated
+  maxepidate <- "2022-05-09"
+  
+  # df for peaks
+  df_max <- region_dfplot %>% group_by(VOC) %>% slice(which.max(mult_pop)) %>% filter(VOC %in% c("Omicron BA.1*", "Delta*"))# could put this in an if statement to swithc between BA.1 and BA.2
+  
+  # Scaling factor for secondary y axis (maximum y value on plot)
+  scaling_factor <- df_max[[1,"mult_pop"]]
+  
+  # df for BA.2 metrics 
+  df_max_variant <- df_max[df_max$VOC == "Omicron BA.1*", ] # and this?
+
+  # Plotting:
+  p <- ggplot(data = region_dfplot) + 
+    geom_area(aes(x = as.Date(week), 
+                  y = mult_pop, 
+                  fill = VOC),alpha = 0.7, 
+              position = "identity")+
+    scale_fill_manual(breaks = c("Delta*", "Omicron BA.1*", "Omicron BA.2*"), 
+                      values = pal) +
+    labs(x = NULL,title = location) +
+    theme_bw()+
+    theme(legend.text = element_text(size = 7)
+			, legend.position = c(0.85,0.7)
+			, axis.text = element_text(size = 10)
+    ) +
+    scale_y_continuous(name = "VOC Cases per 100,000 Population", 
+                       labels = comma, 
+                       sec.axis = sec_axis(~ . / scaling_factor, 
+                                           name = "Relative Size")) + 
+    scale_x_date(date_breaks = "3 months", 
+                 date_labels = "%b %Y",
+                 limits = c(as.Date(mindate), as.Date(maxepidate)))
+  
+  # Add annotation layer if labels = "yes"
+  if (labels == "yes") {
+    p <- p + 
+      annotate("text", # Label BA.1 peak time
+                      x = df_max_variant$week, 
+                      y = 0-(0.1*scaling_factor), 
+                      label = "t_maxpeak", 
+                      alpha = 0.8)+
+      annotate("text", # Label when BA.1 exceeds 10% of sequences: t_0
+             x = df_max_variant$BA1_end,
+             y = 0-(0.1*scaling_factor),
+             label = "t_0",
+             alpha = 0.8)  +
+      annotate("text", # Label the start of the fitting window : t_pred
+             x = df_max_variant$BA1_wk1,
+             y = 0-(0.1*scaling_factor),
+             label = "t_pred",
+             alpha = 0.8)
+  }
+  # plot stacked VOCs under total cases if stacked = "yes"
+   if (stacked == "yes") {
+    p <- p + 
+      geom_area(aes(x=week, y = mult_pop, fill = VOC))+
+      geom_line(aes(x=week, y = weekly_cases_pop), size = 0.75) +
+      scale_y_continuous(name = "Cases Per 100,000 Population (Total)", labels = comma)
+  }
+  
+  p <- p +
+    geom_point(data = df_max, # BA.1 and Delta peaks
+               aes(x = week, y = mult_pop), 
+               show.legend=FALSE) +
+    annotate("segment", # Tick for BA.2 peak
+             x = df_max_variant$week, 
+             xend = df_max_variant$week, 
+             y = 0-(0.05*scaling_factor), 
+             yend = (0.05*scaling_factor), 
+             alpha = 0.3) +
+    annotate("segment", # Tick for t_0
+             x = df_max_variant$BA1_end, 
+             xend = df_max_variant$BA1_end, 
+             y = 0-(0.05*scaling_factor), 
+             yend = (0.05*scaling_factor), 
+             alpha = 0.3) +
+    annotate("segment", # Tick for t_pred
+             x = df_max_variant$BA1_wk1, 
+             xend = df_max_variant$BA1_wk1, 
+             y = 0-(0.05*scaling_factor), 
+             yend = (0.05*scaling_factor), 
+             alpha = 0.3)+
+    annotate("rect", # Shaded rectangle for fitting window
+         xmin = df_max_variant$BA1_wk1, 
+         xmax = df_max_variant$BA1_end, 
+         ymin = 0, 
+         ymax = max(df_max$mult_pop), 
+         fill = "black", 
+         alpha = 0.3)
+return(p)
+}
+
+# This function should create zoomed in plots of the BA.1 - BA.2 (date range should accomodate all countries). optional commands determine whether to label the fitting window (t_pred to t_0) and the BA.2 peak, and whether the create stacked or separated VOC waves. 
+```
+
+```{r}
+for (location in my_regions){
+  p <- vdplot2(location, dfplot)
+  p <- p + theme(
+  legend.position="none",
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99),
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  )
+  
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# whatever country is at the bottom will have to be redone to have the x axis
+
+for (location in c("France", "Mexico", "Japan", "South Korea")){
+  p <- vdplot2(location, dfplot)
+  p <- p + theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  ) 
+
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# See the order I need:
+BA1_pull_dates %>% arrange(BA1_end) # note, Puerto Rico has dates because it's based on the gisaid data only
+
+#Part 1:
+p6 <- South_Africa / Norway / Austria / Belgium/ Canada / Chile / Finland / Ireland / Spain / United_Kingdom / France + 
+  plot_layout(axes = "collect_y") | 
+  Australia / Brazil / Colombia / Costa_Rica / Denmark / Germany / India / Israel /  Italy /  Malaysia / Mexico + 
+  plot_layout(axes = "collect_y")
+
+p6
+ggsave("../../results/figures/Supp_Fig_3_BA1.png",width = 10,height = 10)
+
+#Part 2:
+p7 <-  Netherlands / Panama / Peru / Portugal / Romania / Singapore / Sweden / Switzerland / USA / Argentina / Japan + 
+  plot_layout(axes = "collect_y") | 
+  Thailand / Bulgaria / Indonesia / Luxembourg / Slovakia / Slovenia / Croatia / Poland / Russia / South_Korea / plot_spacer() + 
+  plot_layout(axes = "collect_y")
+
+p7
+ggsave("../../results/figures/Supp_Fig_4_BA1.png",width = 10,height = 10)
+
+# Creating custom legend:
+test <- dfplot %>% filter(VOC=="Mu" & location=="Colombia")
+test <- dfplot %>% filter(VOC=="Lambda" & location=="Peru")
+test <- dfplot %>% filter(VOC=="Gamma" & location=="Argentina")
+# confirmed recombinant
+
+p <- dfplot %>% 
+  filter(location == "World") %>% # couldn't wrap ggplot code in parentheses when piping in this filter
+  ggplot(aes(x = week)) +
+  geom_area(aes(y=mult,fill=VOC),alpha = 0.75, position = "identity") +
+  scale_fill_manual(breaks = c("wildtype B*", "Lambda", "Alpha*", "Mu", "Beta", "Omicron BA.1*", "Gamma", "Omicron BA.2*", "Delta*", "Omicron BA.4*"), values = pal)+
+  theme(legend.position = "bottom")
+
+p
+ggsave("../../results/figures/for_legend2.png",width = 10.5,height = 5)
+
+```
+
+## Sequencing Effort
+```{r}
+sequence_plot <- function(location, dfplot) {
+  # Subset data by region
+  region_dfplot <- dfplot[dfplot$location == location, ]
+
+  # Rescale sequencing effort
+region_dfplot$rescaled_eff<- region_dfplot$sequenc_eff * max(region_dfplot$weekly_cases_pop, na.rm = TRUE) / max(region_dfplot$sequenc_eff, na.rm = TRUE)
+
+# Calculate scaling factor
+scaling_factor <- max(region_dfplot$weekly_cases_pop, na.rm = TRUE) / max(region_dfplot$sequenc_eff, na.rm = TRUE)
+
+p <- ggplot(data = region_dfplot, aes(x = as.Date(week))) + 
+  geom_area(aes(y = mult_pop, fill = VOC))  +
+  geom_line(aes(y = weekly_cases_pop), size = 0.7) +
+  geom_line(aes(y = rescaled_eff))+
+  scale_fill_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = location)+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = c(0.23,0.605)
+			, axis.text = element_text(size = 10)
+    ) +
+  scale_y_continuous(name = "Weekly Cases per 100,000 Population", 
+                       labels = comma, 
+                       sec.axis = sec_axis(~ . / scaling_factor, 
+                                           name = "Sequencing Effort"))
+return(p)
+}
+
+for (location in my_regions){
+  p <- sequence_plot(location, dfplot)
+  p <- p + theme(
+  legend.position="none",
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99),
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  )
+  
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# whatever country is at the bottom will have to be redone to have the x axis
+
+for (location in c("Croatia", "Malaysia", "Slovenia", "Singapore")){
+  p <- sequence_plot(location, dfplot)
+  p <- p + theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  ) 
+
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+#Part 1:
+p8 <- Argentina / Australia / Austria / Belgium / Brazil / Bulgaria / Canada / Chile / Colombia / Costa_Rica / Croatia + 
+  plot_layout(axes = "collect_y") | 
+  Denmark / Finland / France / Germany / Indonesia / Ireland / Israel / Italy / Japan / Luxembourg / Malaysia + 
+  plot_layout(axes = "collect_y")
+
+p8
+ggsave("../../results/figures/Supp_Fig_5_sequence.png",width = 10,height = 10)
+
+#Part 2:
+p9 <-  Mexico / Netherlands / Norway / Panama / Peru / Poland / Portugal / Romania / Russia / Slovakia / Slovenia  + 
+  plot_layout(axes = "collect_y") | 
+  South_Africa / South_Korea / Spain / Sweden / Switzerland / Thailand / United_Kingdom / USA / India / Singapore / plot_spacer() + 
+  plot_layout(axes = "collect_y")
+
+p9
+ggsave("../../results/figures/Supp_Fig_6_sequence.png",width = 10,height = 10)
+
+```
+
+## Diversity
+```{r}
+sequence_plot <- function(location, dfplot) {
+  # Subset data by region
+  region_dfplot <- dfplot[dfplot$location == location, ]
+
+  # Rescale sequencing effort
+region_dfplot$rescaled_div<- region_dfplot$diversity * max(region_dfplot$weekly_cases_pop, na.rm = TRUE) / max(region_dfplot$diversity, na.rm = TRUE)
+
+# Calculate scaling factor
+scaling_factor <- max(region_dfplot$weekly_cases_pop, na.rm = TRUE) / max(region_dfplot$diversity, na.rm = TRUE)
+
+p <- ggplot(data = region_dfplot, aes(x = as.Date(week))) + 
+  geom_area(aes(y = mult_pop, fill = VOC))  +
+  geom_line(aes(y = weekly_cases_pop), size = 0.7) +
+  geom_line(aes(y = rescaled_div))+
+  scale_fill_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = location)+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = c(0.23,0.605)
+			, axis.text = element_text(size = 10)
+    ) +
+  scale_y_continuous(name = "Weekly Cases per 100,000 Population", 
+                       labels = comma, 
+                       sec.axis = sec_axis(~ . / scaling_factor, 
+                                           name = "Hill Diversity"))
+return(p)
+}
+
+for (location in my_regions){
+  p <- sequence_plot(location, dfplot)
+  p <- p + theme(
+  legend.position="none",
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99),
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  )
+  
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# whatever country is at the bottom will have to be redone to have the x axis
+
+for (location in c("Croatia", "Malaysia", "Slovenia", "Singapore")){
+  p <- sequence_plot(location, dfplot)
+  p <- p + theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  ) 
+
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+#Part 1:
+p10 <- Argentina / Australia / Austria / Belgium / Brazil / Bulgaria / Canada / Chile / Colombia / Costa_Rica / Croatia + 
+  plot_layout(axes = "collect_y") | 
+  Denmark / Finland / France / Germany / Indonesia / Ireland / Israel / Italy / Japan / Luxembourg / Malaysia + 
+  plot_layout(axes = "collect_y")
+
+p10
+ggsave("../../results/figures/Supp_Fig_7_diversity.png",width = 10,height = 10)
+
+#Part 2:
+p11 <-  Mexico / Netherlands / Norway / Panama / Peru / Poland / Portugal / Romania / Russia / Slovakia / Slovenia  + 
+  plot_layout(axes = "collect_y") | 
+  South_Africa / South_Korea / Spain / Sweden / Switzerland / Thailand / United_Kingdom / USA / India / Singapore / plot_spacer() + 
+  plot_layout(axes = "collect_y")
+
+p11
+ggsave("../../results/figures/Supp_Fig_8_diversity.png",width = 10,height = 10)
+
+# should move the country name to the left if we keep this. Would separate VOC waves be better for this one?
+```
+# Figure S3
+
+```{r}
+div_seq <- function(location, dfplot) {
+  # Subset data by region
+  region_dfplot <- dfplot[dfplot$location == location, ]
+
+  # Rescale sequencing effort
+region_dfplot$rescaled_eff<- region_dfplot$sequenc_eff * 100
+
+# Calculate scaling factor
+scaling_factor <- 100
+
+p <- ggplot(data = region_dfplot, aes(x = as.Date(week))) + 
+  geom_line(aes(y = diversity), size = 0.7) +
+  geom_line(aes(y = rescaled_eff, color = "red"))+
+  scale_fill_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = location)+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = c(0.23,0.605)
+			, axis.text = element_text(size = 10)
+    ) +
+  scale_y_continuous(name = "Pango Diversity (Top) and Proportion (Bottom)", 
+                     limits = c(NA, 100),
+                       labels = comma, 
+                       sec.axis = sec_axis(~ . / scaling_factor, 
+                                           name = "Sequencing Effort"))
+return(p)
+}
+
+for (location in my_regions){
+  p <- div_seq(location, dfplot)
+  p <- p + theme(
+  legend.position="none",
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99),
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  )
+  print(p)
+  location_name <- gsub(" ", "_", location)
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# whatever country is at the bottom will have to be redone to have the x axis
+
+# for (location in c("Croatia", "Malaysia", "Slovenia", "Singapore")){
+#   p <- div_seq(location, dfplot)
+#   p <- p + theme(
+#   legend.position="none", 
+#   plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+#   plot.margin = margin(0, 0, 0, 0, "cm")
+#   ) 
+# 
+#   location_name <- gsub(" ", "_", location)
+#   assign(location_name, p, envir = .GlobalEnv)
+# }
+
+#Part 1:
+# p8 <- Argentina / Australia / Austria / Belgium / Brazil / Bulgaria / Canada / Chile / Colombia / Costa_Rica / Croatia + 
+#   plot_layout(axes = "collect_y") | 
+#   Denmark / Finland / France / Germany / Indonesia / Ireland / Israel / Italy / Japan / Luxembourg / Malaysia + 
+#   plot_layout(axes = "collect_y")
+# 
+# p8
+# ggsave("../../results/figures/Supp_Fig_5_sequence.png",width = 10,height = 10)
+# 
+# #Part 2:
+# p9 <-  Mexico / Netherlands / Norway / Panama / Peru / Poland / Portugal / Romania / Russia / Slovakia / Slovenia  + 
+#   plot_layout(axes = "collect_y") | 
+#   South_Africa / South_Korea / Spain / Sweden / Switzerland / Thailand / United_Kingdom / USA / India / Singapore / plot_spacer() + 
+#   plot_layout(axes = "collect_y")
+# 
+# p9
+# ggsave("../../results/figures/Supp_Fig_6_sequence.png",width = 10,height = 10)
+
+```
+# 
+```{r}
+#dfplot$VOC <- factor(dfplot$VOC, levels = order)
+prop_plot <- function(location, dfplot) {
+  # Subset data by region
+  region_dfplot <- dfplot[dfplot$location == location, ]
+
+p <- ggplot(data = region_dfplot, aes(x = as.Date(week))) + 
+  geom_bar(mapping = aes(y=proportion,  fill = VOC), position="stack", stat="identity") +
+  #geom_area(mapping = aes(y=proportion, fill = VOC), position="stack")+
+  scale_fill_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = location)+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = "right"
+			, axis.text = element_text(size = 10)
+    ) +
+  scale_y_continuous(name = "Pango Diversity (Top) and Proportion (Bottom)", 
+                       labels = comma, 
+                       sec.axis = sec_axis(~ ., 
+                                           name = "Sequencing Effort"))+
+  theme(axis.ticks.y.right = element_blank(),
+               axis.text.y.right = element_blank())+
+  coord_cartesian(ylim = c(0, 1))
+return(p)
+}
+
+for (location in my_regions){
+  p <- prop_plot(location, dfplot)
+  p <- p + theme(
+  legend.position="none",
+  axis.ticks.x = element_blank(),
+  axis.text.x = element_blank(),
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99),
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  )
+  print(p)
+  location_name <- paste0(gsub(" ", "_", location),"2")
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+for (location in c("Croatia", "Malaysia", "Slovenia", "Singapore")){
+  p <- prop_plot(location, dfplot)
+  p <- p + theme(
+  legend.position="none", 
+  plot.title = element_text(size = 10, vjust = -8, hjust = 0.99), 
+  plot.margin = margin(0, 0, 0, 0, "cm")
+  ) 
+
+  location_name <- paste0(gsub(" ", "_", location),"2")
+  assign(location_name, p, envir = .GlobalEnv)
+}
+
+# combining the div_seq and prop plots into one image:
+#Part 1:
+p8 <- Argentina / Argentina2 / Australia / Australia2 / Austria / Austria2 / Belgium / Belgium2 / Brazil / Brazil2 / Bulgaria / Bulgaria2 / Canada / Canada2 / Chile / Chile2 / Colombia / Colombia2 / Costa_Rica / Costa_Rica2 / Croatia / Croatia2 + 
+  plot_layout(axes = "collect_y") | 
+  Denmark / Denmark2 / Finland / Finland2 / France / France2 / Germany / Germany2 / Indonesia / Indonesia2 / Ireland / Ireland2 / Israel / Israel2 / Italy / Italy2 / Japan / Japan2 / Luxembourg / Luxembourg2 / Malaysia / Malaysia2 + 
+  plot_layout(axes = "collect_y")
+
+# these need to have the same y axis - change to describe both for each, then rerun everything. Should look good.
+
+p8
+ggsave("../../results/figures/Supp_Fig_divseqprop.png",width = 10,height = 20)
+
+#Part 2:
+p9 <-  Mexico / Mexico2 / Netherlands / Netherlands2 / Norway / Norway2 / Panama / Panama2 / Peru / Peru2 / Poland / Poland2 / Portugal / Portugal2 / Romania / Romania2 / Russia / Russia2 / Slovakia / Slovakia2 / Slovenia / Slovenia2  +
+  plot_layout(axes = "collect_y") |
+  South_Africa / South_Africa2 / South_Korea / South_Korea2 / Spain / Spain2 / Sweden / Sweden2 / Switzerland / Switzerland2 / Thailand / Thailand2 / United_Kingdom / United_Kingdom2 / USA / USA2 / India / India2 / Singapore / Singapore2 / plot_spacer() + plot_spacer() + plot_layout(axes = "collect_y")
+
+p9
+ggsave("../../results/figures/Supp_Fig_divseqprop2.png",width = 10,height = 20)
+
+# for legend:
+p10 <- prop_plot("World", dfplot)+
+  scale_fill_manual(breaks = c("wildtype A*", "wildtype B*", "Alpha*", "Beta", "Gamma", "Delta*", "Epsilon", "Eta", "Iota", "Kappa"),values = pal)+
+  theme(
+  legend.position="bottom"
+  ) 
+
+p10
+ggsave("../../results/figures/full_legend_bottom1.png",width = 10,height = 10)
+
+
+p11 <- prop_plot("World", dfplot)+
+  scale_fill_manual(breaks = c("Lambda", "Mu", "Omicron BA.1*", "Omicron BA.2*", "Omicron BA.2.75*", "Omicron BA.4*", "Omicron BA.5*", "Omicron BQ.*", "Recombinants", "Unassigned", "XBB*", "XBB.1.5"),values = pal)+
+  theme(
+  legend.position="bottom"
+  ) 
+
+p11
+ggsave("../../results/figures/full_legend_bottom2.png",width = 10,height = 10)
+```
+
+```{r}
+slovakia <- dfplot %>% filter(location=="Slovakia")
+test <- slovakia %>% group_by(week) %>% summarize(sum(proportion))
+
+
+ggplot(data = slovakia, aes(x = as.Date(week))) + 
+  geom_bar(mapping = aes(y=proportion,  fill = VOC), position="stack", stat="identity") +
+  #geom_area(mapping = aes(y=proportion, fill = VOC), position="stack")+
+  scale_fill_manual(breaks = order,values = pal)+
+  labs(x = NULL,title = "Slovakia")+
+	theme_bw()+
+  theme(legend.text = element_text(size = 7)
+			, legend.position = "right"
+			, axis.text = element_text(size = 10)
+    ) +
+  scale_y_continuous(name = "Proportion", 
+                       labels = comma)+
+  coord_cartesian(ylim = c(0, 1))
+```
+

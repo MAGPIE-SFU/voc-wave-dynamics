@@ -1,0 +1,89 @@
+"focal","rel_to","region","s_perday","low_CI95","high_CI95"
+"Omicron BA.2*","rest","Argentina",4.6,-0.6,9.7
+"Omicron BA.2*","rest","Australia",6,5,6.9
+"Omicron BA.2*","rest","Austria",15.2,12.8,17.6
+"Omicron BA.2*","rest","Belgium",16.1,14.9,17.3
+"Omicron BA.2*","rest","Brazil",6.3,5.4,7.3
+"Omicron BA.2*","rest","Bulgaria",14.2,12.1,16.2
+"Omicron BA.2*","rest","Canada",4.2,3.6,4.7
+"Omicron BA.2*","rest","Chile",6.8,4.3,9.2
+"Omicron BA.2*","rest","Colombia",16.4,11.8,21
+"Omicron BA.2*","rest","Costa Rica",7.2,2.2,12.3
+"Omicron BA.2*","rest","Croatia",10,8.3,11.6
+"Omicron BA.2*","rest","Denmark",20.1,19.2,21
+"Omicron BA.2*","rest","Finland",10.7,8.4,13.1
+"Omicron BA.2*","rest","France",11,10.4,11.7
+"Omicron BA.2*","rest","Germany",10.3,9.8,10.7
+"Omicron BA.2*","rest","Indonesia",4,2.9,5.1
+"Omicron BA.2*","rest","Ireland",14.6,13,16.2
+"Omicron BA.2*","rest","Israel",7.7,6.7,8.8
+"Omicron BA.2*","rest","Italy",10.3,9.1,11.4
+"Omicron BA.2*","rest","Japan",6.7,6.1,7.3
+"Omicron BA.2*","rest","Luxembourg",13.8,11.9,15.7
+"Omicron BA.2*","rest","Malaysia",11.2,8.6,13.7
+"Omicron BA.2*","rest","Mexico",12.4,9.4,15.5
+"Omicron BA.2*","rest","Netherlands",10.1,9,11.1
+"Omicron BA.2*","rest","Norway",29.6,24.7,34.5
+"Omicron BA.2*","rest","Panama",5.8,-0.4,11.9
+"Omicron BA.2*","rest","Peru",8.7,5,12.3
+"Omicron BA.2*","rest","Poland",10.5,9.7,11.3
+"Omicron BA.2*","rest","Portugal",11.4,9.1,13.7
+"Omicron BA.2*","rest","Puerto Rico",15.6,9.1,22.2
+"Omicron BA.2*","rest","Romania",14,10.4,17.6
+"Omicron BA.2*","rest","Russia",10.8,9.4,12.1
+"Omicron BA.2*","rest","Slovakia",11.4,9.7,13
+"Omicron BA.2*","rest","Slovenia",7.9,6.6,9.2
+"Omicron BA.2*","rest","South Africa",9.2,7.8,10.6
+"Omicron BA.2*","rest","South Korea",10.7,8.9,12.6
+"Omicron BA.2*","rest","Spain",9.6,8.6,10.6
+"Omicron BA.2*","rest","Sweden",13.3,12.2,14.4
+"Omicron BA.2*","rest","Switzerland",14.8,13.1,16.4
+"Omicron BA.2*","rest","Thailand",8.8,7.6,10
+"Omicron BA.2*","rest","United Kingdom",11.8,11.6,12.1
+"Omicron BA.2*","rest","USA",9.9,9.7,10.2
+"Omicron BA.2*","rest","India",16.8,15,18.5
+"Omicron BA.2*","rest","Singapore",28.6,20.9,36.2
+"Omicron BA.1*","rest","Argentina",9.7,6.1,13.3
+"Omicron BA.1*","rest","Australia",24,20.3,27.6
+"Omicron BA.1*","rest","Austria",19.5,12.6,26.4
+"Omicron BA.1*","rest","Belgium",24.6,21.7,27.5
+"Omicron BA.1*","rest","Brazil",20.6,18.6,22.5
+"Omicron BA.1*","rest","Bulgaria",38.3,28.8,47.7
+"Omicron BA.1*","rest","Canada",36.8,35.1,38.6
+"Omicron BA.1*","rest","Chile",37.1,23.2,51.1
+"Omicron BA.1*","rest","Colombia",30.2,23.8,36.6
+"Omicron BA.1*","rest","Costa Rica",41.3,19.9,62.6
+"Omicron BA.1*","rest","Croatia",24.3,21.8,26.8
+"Omicron BA.1*","rest","Denmark",28.8,28,29.6
+"Omicron BA.1*","rest","Finland",32,23.5,40.5
+"Omicron BA.1*","rest","France",34.2,32.2,36.1
+"Omicron BA.1*","rest","Germany",17.2,16.4,18
+"Omicron BA.1*","rest","Indonesia",17.7,8.1,27.3
+"Omicron BA.1*","rest","Ireland",47.5,40.7,54.4
+"Omicron BA.1*","rest","Israel",21.6,18,25.3
+"Omicron BA.1*","rest","Italy",28.1,24.9,31.2
+"Omicron BA.1*","rest","Japan",15.7,9.6,21.8
+"Omicron BA.1*","rest","Luxembourg",32.2,28.1,36.2
+"Omicron BA.1*","rest","Malaysia",25.4,19.4,31.5
+"Omicron BA.1*","rest","Mexico",25.9,22,29.7
+"Omicron BA.1*","rest","Netherlands",13.8,12.6,15
+"Omicron BA.1*","rest","Norway",45.4,37.7,53.2
+"Omicron BA.1*","rest","Panama",35.1,13.8,56.5
+"Omicron BA.1*","rest","Peru",48.2,36.5,60
+"Omicron BA.1*","rest","Poland",20.1,18.1,22
+"Omicron BA.1*","rest","Portugal",11.6,9.1,14.2
+"Omicron BA.1*","rest","Puerto Rico",36,21.1,50.9
+"Omicron BA.1*","rest","Romania",23.2,7.5,38.9
+"Omicron BA.1*","rest","Russia",12.3,10.7,13.8
+"Omicron BA.1*","rest","Slovakia",17.4,13.4,21.4
+"Omicron BA.1*","rest","Slovenia",35.8,31.3,40.3
+"Omicron BA.1*","rest","South Africa",20.5,13.9,27.1
+"Omicron BA.1*","rest","South Korea",9.5,8,11.1
+"Omicron BA.1*","rest","Spain",22.9,20.6,25.2
+"Omicron BA.1*","rest","Sweden",23.3,21.6,25
+"Omicron BA.1*","rest","Switzerland",16.5,15.4,17.7
+"Omicron BA.1*","rest","Thailand",28.5,22.8,34.2
+"Omicron BA.1*","rest","United Kingdom",32.9,32.2,33.5
+"Omicron BA.1*","rest","USA",31.3,30.9,31.7
+"Omicron BA.1*","rest","India",16,14.5,17.6
+"Omicron BA.1*","rest","Singapore",35.6,29.8,41.5

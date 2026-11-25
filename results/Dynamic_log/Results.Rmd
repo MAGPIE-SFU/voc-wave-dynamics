@@ -1,0 +1,633 @@
+---
+title: "Results"
+author: "Shab Molan"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(ggrepel)
+library(reshape2)
+library(magick)
+library(scales)
+
+load("../V1_43/V1_43.RData")
+resultsLOOCVBA1BA2_fixed <- resultsLOOCVBA1BA2
+BA1BA2_fixed <- BA1BA2
+
+load("Dynamic_log.RData")
+resultsLOOCVBA1BA2_dynamic <- resultsLOOCVBA1BA2
+```
+
+```{r Prediction Visualization BA1BA2_fixed}
+dataToPlot <- data.frame(
+  country = names(resultsLOOCVBA1BA2_fixed),
+  actual = sapply(resultsLOOCVBA1BA2_fixed, function(x) x$actuals[1]),  
+  overallMean = sapply(resultsLOOCVBA1BA2_fixed, function(x) x$overalMean),
+  sd = sapply(resultsLOOCVBA1BA2_fixed, function(x) sd(sapply(x$perImputation, function(p) mean(p$predictions)))))
+
+dataToPlot$lowerCI <- dataToPlot$overallMean - dataToPlot$sd
+dataToPlot$upperCI <- dataToPlot$overallMean + dataToPlot$sd
+
+specific_countries <- c("Austria", "Denmark", "India", 
+   "Malaysia", "Singapore", "South Africa", "South Korea", "Sweden", "Thailand")
+
+dataToPlot$label <- ifelse(dataToPlot$country %in% specific_countries, dataToPlot$country, "")
+
+p1 <- ggplot(dataToPlot, aes(x = actual, y = overallMean)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgray") +
+  geom_point() +
+  geom_errorbar(aes(ymin = lowerCI, ymax = upperCI), width = 0.01, color = "lightgray") +
+  geom_text_repel(
+    aes(label = label),
+    size = 3.2,
+    box.padding = 0.35,
+    point.padding = 0.3,
+    max.overlaps = Inf,
+    min.segment.length = 0.1,
+    segment.color = "grey50",
+    segment.size = 0.3,
+    seed = 1
+  ) +
+  scale_x_log10(
+    limits = c(0.01, 100),
+    breaks = c(0.01, 0.1, 1, 10, 100),
+    labels = label_comma(drop0trailing = TRUE)
+  ) +
+  scale_y_log10(
+    limits = c(0.01, 100),
+    breaks = c(0.01, 0.1, 1, 10, 100),
+    labels = label_comma(drop0trailing = TRUE)
+  ) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Observed Relative Wave Size of BA.2 to BA.1 (log scale)",
+    y = "Mean Prediction (log scale)"
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold", size = 11)
+  )
+
+ggsave("BA2BA1_RF_fixed.pdf", plot = p1, width = 7, height = 7)  
+```
+
+```{r quadrant log plot BA1BA2_fixed}
+# Create a new category for correct and incorrect predictions
+dataToPlot$predictionCategory <- ifelse(
+  (dataToPlot$actual > 1 & dataToPlot$overallMean > 1) |
+  (dataToPlot$actual < 1 & dataToPlot$overallMean < 1),
+  "Correct Prediction", "Incorrect Prediction")
+
+# Create the quadrant plot
+quadrant_plot <- ggplot(dataToPlot, aes(x = actual, y = overallMean, color = predictionCategory)) +
+  
+  # Add points, with size 3
+  geom_point(size = 3, pch = 19) +
+  
+  # Add labels to the "Incorrect Prediction" points, ensuring they don't overlap
+  geom_text_repel(data = subset(dataToPlot, predictionCategory == "Incorrect Prediction"),
+                  aes(label = country),
+                  box.padding = 0.5, 
+                  point.padding = 0.5,
+                  segment.color = 'grey50',
+                  show.legend = FALSE, seed = 1) +
+                  
+  # Set the colors for the prediction categories
+  scale_color_manual(name = "Prediction", 
+                     values = c("Correct Prediction" = "steelblue", "Incorrect Prediction" = "red")) +
+                     
+  # Apply a log10 scale to the x and y axes with specified limits
+  scale_x_log10(limits = c(0.01, 100), breaks = c(0.01, 0.1, 1, 10, 100), labels = scales::label_comma(drop0trailing = TRUE)) +
+  scale_y_log10(limits = c(0.01, 100), breaks = c(0.01, 0.1, 1, 10, 100), labels = scales::label_comma(drop0trailing = TRUE)) +
+  
+  # Add the dashed reference lines at y=1 and x=1
+  geom_hline(yintercept = 1, linetype = "dashed", color = "darkgray") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "darkgray") +
+  
+  # Set the plot labels
+  labs(x = "Observed Relative Wave Size of BA.2 to BA.1 (log scale)",
+       y = "Mean Prediction (log scale)") +
+       
+  # Apply a black and white theme and remove grid lines
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom") 
+
+ggsave("quadrant_log_plot_fixed.pdf", plot = quadrant_plot, width = 7, height = 7)
+```
+
+```{r evaluation metrics BA1BA2_fixed}
+calculateMetrics <- function(actuals, predictions) {
+  residuals <- mean(predictions - actuals)
+  mae <- mean(abs(predictions - actuals))
+  mse <- mean((predictions - actuals)^2)
+  rmse <- sqrt(mse)
+  
+  return(list(Residuals = residuals, MAE = mae, MSE = mse, RMSE = rmse))
+}
+
+metrics_BA1BA2_fixed <- lapply(resultsLOOCVBA1BA2_fixed, function(countryResult) {
+  calculateMetrics(countryResult$actuals, countryResult$aggregated)
+})
+
+# Initialize variables to store sums of metrics
+totalMAE <- 0
+totalMSE <- 0
+totalRMSE <- 0
+
+numCountries <- length(metrics_BA1BA2_fixed)
+
+# Sum up all metrics
+for (countryMetrics in metrics_BA1BA2_fixed) {
+  totalMAE <- totalMAE + countryMetrics$MAE
+  totalMSE <- totalMSE + countryMetrics$MSE
+  totalRMSE <- totalRMSE + countryMetrics$RMSE
+}
+
+# Calculate the mean of each metric across all countries
+meanMAE <- totalMAE / numCountries
+meanMSE <- totalMSE / numCountries
+meanRMSE <- totalRMSE / numCountries
+
+# Calculate R^2
+summary(lm(dataToPlot$overallMean ~ dataToPlot$actual))
+
+# Create a data frame for the metrics
+metrics_df <- data.frame(
+  Metric = c("MAE", "MSE", "RMSE"),
+  Value = c(meanMAE, meanMSE, meanRMSE)
+)
+
+kable(metrics_df, 
+      caption = "Overall Model Performance Metrics for BA1BA2_fixed",
+      align = 'l')
+
+# Calculate density and mean
+relsize_density <- density(BA1BA2_fixed[[1]]$relsize)  
+mean_relsize <- mean(BA1BA2_fixed[[1]]$relsize)
+
+# Plot density
+plot(relsize_density, 
+     main="BA1BA2_fixed Relsize Density Plot", 
+     xlab="Relsize", ylab="Density")
+abline(v=mean_relsize, col="black", lwd=2, lty=2) # Add vertical line for mean
+text(mean_relsize, max(relsize_density$y), labels="Mean Relsize", pos=4, col="black")  # Label for mean
+
+hist(BA1BA2_fixed[[1]]$relsize, breaks=25)
+```
+
+```{r residual plots BA1BA2_fixed}
+# Initialize vectors to store the residuals and predicted values
+all_residuals <- c()
+all_predicted <- c()
+
+# Loop through each country
+for(country in names(resultsLOOCVBA1BA2_fixed)) {
+  # Extract the predicted value 
+  predicted_value <- resultsLOOCVBA1BA2_fixed[[country]]$overalMean
+  # Extract the residual 
+  residual <- metrics_BA1BA2_fixed[[country]]$Residuals
+  
+  # Append to the vectors
+  all_residuals <- c(all_residuals, residual)
+  all_predicted <- c(all_predicted, predicted_value)
+}
+
+# plot the residuals against the predicted values
+plot(all_predicted, all_residuals, 
+     main="Residuals vs Predicted Values for All Countries", 
+     xlab="Predicted Values (overallMean)", ylab="Residuals", 
+     pch=19, col='steelblue')
+
+# Add a horizontal line at 0 to indicate no error
+abline(h=0, col="red", lwd=2)
+
+# Density Plot of Residuals
+dens <- density(all_residuals)
+plot(dens, main='Density Plot of Residuals', xlab='Residuals', ylab='Density')
+
+# Create the empirical CDF
+residuals_ecdf <- ecdf(all_residuals)
+
+# Plot the CDF
+plot(residuals_ecdf, main="CDF of Residuals", xlab="Residuals", ylab="Cumulative Probability", col='steelblue', lwd=2)
+
+# QQ plot for Normal distribution
+qqnorm(all_residuals, main="Q-Q Plot of Residuals", col='steelblue', pch=19)
+qqline(all_residuals, col="red", lwd=2)
+```
+
+```{r feature importances BA1BA2_fixed}
+# Extract and aggregate feature importance data across all countries using the "%IncMSE" column
+aggregated_importance_all <- lapply(resultsLOOCVBA1BA2_fixed, function(res) res$featureImportance)
+
+# Aggregate the "%IncMSE" column across all results by summing and averaging
+average_importance <- Reduce("+", lapply(aggregated_importance_all, function(x) x[, "%IncMSE"])) / length(aggregated_importance_all)
+
+# Create a data frame with features and their aggregated importance values
+importance_df_BA1BA2_fixed <- data.frame(Feature = rownames(aggregated_importance_all[[1]]),
+                            Importance = average_importance)
+
+# Remove underscores from the feature names
+importance_df_BA1BA2_fixed$Feature <- gsub("_", " ", importance_df_BA1BA2_fixed$Feature)
+
+replacements <- c(
+  "icu patients per million" = "ICU patients per million",
+  "hosp patients per million" = "hospital patients per million",
+  "gdp per capita" = "GDP per capita",
+  "cardiovasc death rate" = "cardiovascular death rate",
+  "Nucleocapsid..N.protein..Multiple.groups" = "Nucleocapsid N protein levels",
+  "Nucleocapsid..N.protein...Spike.Multiple.groups" = "Nucleocapsid N protein and Spike protein levels",
+  "Spike.Multiple.groups" = "Spike protein levels",
+  "sel coeff" = "selection coefficient",
+  "s gene" = "genetic distance: S gene",
+  "total" = "genetic distance: all genes",
+  "SeasonFall" = "Fall",
+  "SeasonSpring" = "Spring",
+  "SeasonSummer" = "Summer",
+  "SeasonWinter" = "Winter",
+  "male smokers" = "male smokers prevalence",
+  "female smokers" = "female smokers prevalence",
+  "number of variants" = "number of cocirculating variants"
+)
+
+# Replace the feature names based on the named vector
+importance_df_BA1BA2_fixed$Feature <- sapply(importance_df_BA1BA2_fixed$Feature, function(x) {
+  if (x %in% names(replacements)) {
+    return(replacements[x])
+  } else {
+    return(x)
+  }
+})
+
+# Plot the feature importance 
+ggplot(importance_df_BA1BA2_fixed, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Average Feature Importance", x = "Feature", y = "% Increase in MSE") +
+  theme_bw()
+```
+
+```{r Prediction Visualization Dynamic}
+dataToPlot <- data.frame(
+  country = names(resultsLOOCVBA1BA2_dynamic),
+  actual_log = sapply(resultsLOOCVBA1BA2_dynamic, function(x) x$actuals[1]),  
+  overallMean_log = sapply(resultsLOOCVBA1BA2_dynamic, function(x) x$overalMean),
+  sd_log = sapply(resultsLOOCVBA1BA2_dynamic, function(x) sd(sapply(x$perImputation, function(p) mean(p$predictions)))))
+
+# Reverse the log transformation
+dataToPlot$actual <- exp(dataToPlot$actual_log)
+dataToPlot$overallMean <- exp(dataToPlot$overallMean_log)
+
+dataToPlot$lowerCI <- exp(dataToPlot$overallMean_log - dataToPlot$sd_log)
+dataToPlot$upperCI <- exp(dataToPlot$overallMean_log + dataToPlot$sd_log)
+
+specific_countries <- c("Austria", "Denmark", "India", 
+   "Malaysia", "Singapore", "South Africa", "South Korea", "Sweden", "Thailand")
+
+dataToPlot$label <- ifelse(dataToPlot$country %in% specific_countries, dataToPlot$country, "")
+
+p2 <- ggplot(dataToPlot, aes(x = actual, y = overallMean)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgray") +
+  geom_point() +
+  geom_errorbar(aes(ymin = lowerCI, ymax = upperCI), width = 0.01, color = "lightgray") +
+  geom_text_repel(
+    aes(label = label),
+    size = 3.2,
+    box.padding = 0.35,
+    point.padding = 0.3,
+    max.overlaps = Inf,
+    min.segment.length = 0.1,
+    segment.color = "grey50",
+    segment.size = 0.3,
+    seed = 1
+  ) +
+  scale_x_log10(
+    limits = c(0.01, 100),
+    breaks = c(0.01, 0.1, 1, 10, 100),
+    labels = label_comma(drop0trailing = TRUE)
+  ) +
+  scale_y_log10(
+    limits = c(0.01, 100),
+    breaks = c(0.01, 0.1, 1, 10, 100),
+    labels = label_comma(drop0trailing = TRUE)
+  ) +
+  coord_fixed(ratio = 1) +
+  labs(
+    x = "Observed Relative Wave Size of BA.2 to BA.1 or Delta (log scale)",
+    y = "Mean Prediction (log scale)"
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold", size = 11)
+  )
+
+ggsave("BA2BA1_RF_Dynamic.pdf", plot = p2, width = 7, height = 7)
+```
+
+```{r quadrant log plot Dynamic}
+# Create a new category for correct and incorrect predictions
+dataToPlot$predictionCategory <- ifelse(
+  (dataToPlot$actual > 1 & dataToPlot$overallMean > 1) |
+  (dataToPlot$actual < 1 & dataToPlot$overallMean < 1),
+  "Correct Prediction", "Incorrect Prediction")
+
+# Create the quadrant plot
+quadrant_plot <- ggplot(dataToPlot, aes(x = actual, y = overallMean, color = predictionCategory)) +
+  
+  # Add points, with size 3
+  geom_point(size = 3, pch = 19) +
+  
+  # Add labels to the "Incorrect Prediction" points, ensuring they don't overlap
+  geom_text_repel(data = subset(dataToPlot, predictionCategory == "Incorrect Prediction"),
+                  aes(label = country),
+                  box.padding = 0.5, 
+                  point.padding = 0.5,
+                  segment.color = 'grey50',
+                  show.legend = FALSE, seed = 1) +
+                  
+  # Set the colors for the prediction categories
+  scale_color_manual(name = "Prediction", 
+                     values = c("Correct Prediction" = "steelblue", "Incorrect Prediction" = "red")) +
+                     
+  # Apply a log10 scale to the x and y axes with specified limits
+  scale_x_log10(limits = c(0.01, 100), breaks = c(0.01, 0.1, 1, 10, 100), labels = scales::label_comma(drop0trailing = TRUE)) +
+  scale_y_log10(limits = c(0.01, 100), breaks = c(0.01, 0.1, 1, 10, 100), labels = scales::label_comma(drop0trailing = TRUE)) +
+  
+  # Add the dashed reference lines at y=1 and x=1
+  geom_hline(yintercept = 1, linetype = "dashed", color = "darkgray") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "darkgray") +
+  
+  # Set the plot labels
+  labs(x = "Observed Relative Wave Size of BA.2 to BA.1 or Delta (log scale)",
+       y = "Mean Prediction (log scale)") +
+       
+  # Apply a black and white theme and remove grid lines
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom")
+
+ggsave("quadrant_log_plot_Dynamic.pdf", plot = quadrant_plot, width = 7, height = 7)
+```
+
+```{r evaluation metrics Dynamic}
+# 1. Calculate metrics
+calculateMetrics <- function(actuals_log, predictions_log) {
+  # Exponentiate to return to original scale
+  actuals <- exp(actuals_log)
+  predictions <- exp(predictions_log)
+  
+  residuals <- mean(predictions - actuals)
+  mae <- mean(abs(predictions - actuals))
+  mse <- mean((predictions - actuals)^2)
+  rmse <- sqrt(mse)
+  
+  return(list(Residuals = residuals, MAE = mae, MSE = mse, RMSE = rmse))
+}
+
+metrics_BA1BA2_dynamic <- lapply(resultsLOOCVBA1BA2_dynamic, function(countryResult) {
+  calculateMetrics(countryResult$actuals[1], countryResult$overalMean)
+})
+
+# Initialize variables to store sums of metrics
+totalMAE <- 0
+totalMSE <- 0
+totalRMSE <- 0
+
+numCountries <- length(metrics_BA1BA2_dynamic)
+
+# Sum up all metrics
+for (countryMetrics in metrics_BA1BA2_dynamic) {
+  totalMAE <- totalMAE + countryMetrics$MAE
+  totalMSE <- totalMSE + countryMetrics$MSE
+  totalRMSE <- totalRMSE + countryMetrics$RMSE
+}
+
+# Calculate the mean of each metric across all countries
+meanMAE <- totalMAE / numCountries
+meanMSE <- totalMSE / numCountries
+meanRMSE <- totalRMSE / numCountries
+
+summary(lm(dataToPlot$overallMean_log ~ dataToPlot$actual_log))
+
+# Create a data frame for the metrics
+metrics_df <- data.frame(
+  Metric = c("MAE", "MSE", "RMSE"),
+  Value = c(meanMAE, meanMSE, meanRMSE)
+)
+kable(metrics_df, caption = "Overall Model Performance Metrics for Dynamic", align = 'l')
+
+# 2. Density Plot
+relsize_vals <- exp(BA1BA2[[1]]$relsize) 
+relsize_density <- density(relsize_vals)  
+mean_relsize <- mean(relsize_vals)
+
+plot(relsize_density,     
+     main = "Dynamic Relsize Density Plot",     
+     xlab = "Relsize", ylab = "Density")
+abline(v = mean_relsize, col = "black", lwd = 2, lty = 2) # Add vertical line for mean
+text(mean_relsize, max(relsize_density$y), labels = "Mean Relsize", pos = 4, col = "black")
+```
+
+```{r residual plots Dynamic}
+# Initialize vectors to store the residuals and predicted values
+all_residuals <- c()
+all_predicted <- c()
+
+# Loop through each country
+for(country in names(resultsLOOCVBA1BA2_dynamic)) {
+  # Extract the predicted value 
+  predicted_value <- resultsLOOCVBA1BA2_dynamic[[country]]$overalMean
+  # Extract the residual 
+  residual <- metrics_BA1BA2_dynamic[[country]]$Residuals
+  
+  # Append to the vectors
+  all_residuals <- c(all_residuals, residual)
+  all_predicted <- c(all_predicted, predicted_value)
+}
+
+# plot the residuals against the predicted values
+plot(all_predicted, all_residuals, 
+     main="Residuals vs Predicted Values for All Countries", 
+     xlab="Predicted Values (overallMean)", ylab="Residuals", 
+     pch=19, col='steelblue')
+
+# Add a horizontal line at 0 to indicate no error
+abline(h=0, col="red", lwd=2)
+
+# Density Plot of Residuals
+dens <- density(all_residuals)
+plot(dens, main='Density Plot of Residuals', xlab='Residuals', ylab='Density')
+
+# Create the empirical CDF
+residuals_ecdf <- ecdf(all_residuals)
+
+# Plot the CDF
+plot(residuals_ecdf, main="CDF of Residuals", xlab="Residuals", ylab="Cumulative Probability", col='steelblue', lwd=2)
+
+# QQ plot for Normal distribution
+qqnorm(all_residuals, main="Q-Q Plot of Residuals", col='steelblue', pch=19)
+qqline(all_residuals, col="red", lwd=2)
+```
+
+```{r feature importances Dynamic}
+# Extract and aggregate feature importance data across all countries using the "%IncMSE" column
+aggregated_importance_all <- lapply(resultsLOOCVBA1BA2_dynamic, function(res) res$featureImportance)
+
+# Aggregate the "%IncMSE" column across all results by summing and averaging
+average_importance <- Reduce("+", lapply(aggregated_importance_all, function(x) x[, "%IncMSE"])) / length(aggregated_importance_all)
+
+# Create a data frame with features and their aggregated importance values
+importance_df_Dynamic <- data.frame(Feature = rownames(aggregated_importance_all[[1]]),
+                            Importance = average_importance)
+
+# Remove underscores from the feature names
+importance_df_Dynamic$Feature <- gsub("_", " ", importance_df_Dynamic$Feature)
+
+replacements <- c(
+  "icu patients per million" = "ICU patients per million",
+  "hosp patients per million" = "hospital patients per million",
+  "gdp per capita" = "GDP per capita",
+  "cardiovasc death rate" = "cardiovascular death rate",
+  "Nucleocapsid..N.protein..Multiple.groups" = "Nucleocapsid N protein levels",
+  "Nucleocapsid..N.protein...Spike.Multiple.groups" = "Nucleocapsid N protein and Spike protein levels",
+  "Spike.Multiple.groups" = "Spike protein levels",
+  "sel coeff" = "selection coefficient",
+  "s gene" = "genetic distance: S gene",
+  "total" = "genetic distance: all genes",
+  "SeasonFall" = "Fall",
+  "SeasonSpring" = "Spring",
+  "SeasonSummer" = "Summer",
+  "SeasonWinter" = "Winter",
+  "male smokers" = "male smokers prevalence",
+  "female smokers" = "female smokers prevalence",
+  "number of variants" = "number of cocirculating variants"
+)
+
+# Replace the feature names based on the named vector
+importance_df_Dynamic$Feature <- sapply(importance_df_Dynamic$Feature, function(x) {
+  if (x %in% names(replacements)) {
+    return(replacements[x])
+  } else {
+    return(x)
+  }
+})
+
+# Plot the feature importance
+ggplot(importance_df_Dynamic, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Average Feature Importance", x = "Feature", y = "% Increase in MSE") +
+  theme_bw()
+```
+
+```{r combined RF plots}
+pdf1 <- image_read_pdf("BA2BA1_RF_fixed.pdf", density = 300)
+pdf2 <- image_read_pdf("BA2BA1_RF_Dynamic.pdf", density = 300)
+
+# Add labels to the images
+pdf1 <- image_annotate(pdf1, "(A)", size = 20, location = "+20+20", gravity = "northwest")
+pdf2 <- image_annotate(pdf2, "(B)", size = 20, location = "+20+20", gravity = "northwest")
+
+combined <- image_append(c(pdf1, pdf2))
+
+image_write(combined, path = "combined_RF_Dynamic.pdf", format = "pdf")
+```
+
+```{r combined quadrant log plots}
+pdf1 <- image_read_pdf("quadrant_log_plot_fixed.pdf", density = 300)
+pdf2 <- image_read_pdf("quadrant_log_plot_Dynamic.pdf", density = 300)
+
+# Add labels to the images
+pdf1 <- image_annotate(pdf1, "(A)", size = 20, location = "+20+20", gravity = "northwest")
+pdf2 <- image_annotate(pdf2, "(B)", size = 20, location = "+20+20", gravity = "northwest")
+
+# Combine the labeled images side by side
+combined <- image_append(c(pdf1, pdf2))
+
+image_write(combined, path = "combined_quadrant_log_plots_Dynamic.pdf", format = "pdf")
+```
+
+```{r}
+# Helper function to process importance data and rename features
+extract_importance <- function(results, model_label) {
+  aggregated_all <- lapply(results, function(res) res$featureImportance)
+  avg_imp <- Reduce("+", lapply(aggregated_all, function(x) x[, "%IncMSE"])) / length(aggregated_all)
+  
+  df <- data.frame(
+    Feature = rownames(aggregated_all[[1]]),
+    Importance = avg_imp,
+    Model = model_label
+  )
+  
+  df$Feature <- gsub("_", " ", df$Feature)
+  
+  replacements <- c(
+    "icu patients per million" = "ICU patients per million",
+    "hosp patients per million" = "hospital patients per million",
+    "gdp per capita" = "GDP per capita",
+    "cardiovasc death rate" = "cardiovascular death rate",
+    "Nucleocapsid..N.protein..Multiple.groups" = "Nucleocapsid N protein levels",
+    "Nucleocapsid..N.protein...Spike.Multiple.groups" = "Nucleocapsid N protein and Spike protein levels",
+    "Spike.Multiple.groups" = "Spike protein levels",
+    "sel coeff" = "selection coefficient",
+    "s gene" = "genetic distance: S gene",
+    "total" = "genetic distance: all genes",
+    "SeasonFall" = "Fall",
+    "SeasonSpring" = "Spring",
+    "SeasonSummer" = "Summer",
+    "SeasonWinter" = "Winter",
+    "male smokers" = "male smokers prevalence",
+    "female smokers" = "female smokers prevalence",
+    "number of variants" = "number of cocirculating variants"
+  )
+  
+  df$Feature <- sapply(df$Feature, function(x) ifelse(x %in% names(replacements), replacements[x], x))
+  return(df)
+}
+
+# 1. Extract data
+importance_df_BA1BA2_dynamic <- extract_importance(resultsLOOCVBA1BA2_dynamic, "BA2/BA1 or Delta")
+importance_df_BA1BA2_fixed <- extract_importance(resultsLOOCVBA1BA2_fixed, "BA2/BA1")
+
+# 2. Define feature order based on BA2/BA1 importance values
+feature_order <- importance_df_BA1BA2_fixed$Feature[order(importance_df_BA1BA2_fixed$Importance)]
+
+# 3. Combine datasets and apply the factor ordering
+combined_importance <- rbind(importance_df_BA1BA2_dynamic, importance_df_BA1BA2_fixed)
+combined_importance$Feature <- factor(combined_importance$Feature, levels = feature_order)
+
+# 4. Plot side-by-side grouped bars
+p <- ggplot(combined_importance, aes(x = Feature, y = Importance, fill = Model)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_fill_manual(values = c("BA2/BA1" = "#4682B4", "BA2/BA1 or Delta" = "#E69F00")) +
+  labs(
+    title = "Average Feature Importance Comparison",
+    x = "Feature",
+    y = "% Increase in MSE",
+    fill = "Model"
+  ) +
+  theme_bw()
+
+ggsave(
+  filename = "feature_importance_comparison_Dynamic.pdf",
+  plot = p,
+  width = 8,
+  height = 10,
+  units = "in",
+  dpi = 300
+)
+```

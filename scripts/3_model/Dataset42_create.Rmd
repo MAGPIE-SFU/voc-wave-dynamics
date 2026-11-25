@@ -1,0 +1,235 @@
+---
+title: "Dataset for prediction: 42 countries"
+author: "Jessica Stockdale"
+date: "`r format(Sys.Date(),'%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+---
+
+```{r, setup, echo=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE, comment = "", echo = FALSE
+)
+```
+
+```{r, load_data, include=FALSE}
+#-- setup code
+
+# libraries
+listlibraries <- c(
+  "plyr", "tidyverse",
+  "scales", "gridExtra", "lemon", "RColorBrewer", "lubridate", "viridis", "cowplot", "data.table", "ggnewscale", "DT"
+) # "forcats", "zoo",
+
+invisible(lapply(listlibraries, library, character.only = TRUE))
+```
+
+```{r, Load-Data}
+load("../../data/VOC_global.RData")
+load("../../data/voc_emergence.RData")
+```
+
+```{r, Load-Functions}
+source("../2_variant_dynamics/find_peaks.R")
+source("../2_variant_dynamics/find_valleys.R")
+```
+
+
+# Create dataset with 42 countries, and view variant dynamic plots {.tabset}
+
+(Adapted from Nathan's global wave metrics workbook)
+
+Final data point selected as the first epi week in which >10% of cases were the variant we are trying to predict (see name printed below, cases as inferred from GISAID sequence proportions). 42 countries are included: countries that have greater than 10 sequences per week between June 01 2021 to June 01 2022, minus India and Singapore who did not have workable Delta/BA.1/BA.2 periods. 
+
+
+```{r, Plots-Delineated, results = "asis"}
+# Customize to specific dataset you want to create:
+
+# List of countries:
+cs <- read_csv("../../data/42_countries.csv")
+my_regions <- cs$Country
+
+# Start and end dates for plotting:
+mindate <- "2021-03-01"
+maxepidate <- "2022-04-01"
+
+# Variant to generate for predicting
+var <- "Omicron BA.1*"
+# e.g.  "Alpha*"           "Beta"             "Delta*"           "Epsilon"          "Gamma"            "Iota"         
+# "Kappa"            "Lambda"           "Mu"               "Omicron BA.1*"    "Omicron BA.2*"    "Omicron BA.2.75*"
+# "Omicron BA.4*"    "Omicron BA.5*"    "Omicron BQ.*"     "Recombinants"     "XBB*"             "other"           
+# "wildtype A*"      "wildtype B*"  
+
+# File to output to
+outfile <- "../../data/Dates_42countriesDeltaBA1.csv"
+
+print(paste0("Generating dates for predicting ", var, ", compared to previous variant"))
+
+```
+
+```{r}
+# Generate the end dates
+dates <- tibble(country = my_regions, end_date = rep(NA, length(my_regions)), wk4 = rep(NA, length(my_regions)) , wk3 = rep(NA, length(my_regions)), wk2 = rep(NA, length(my_regions)), wk1 = rep(NA,length(my_regions)))
+
+for (location in my_regions) {
+  # Subset data by region
+  region_owid <- owid_data_w[owid_data_w$location == location, ]
+  region_gisaid <- gisaid_data_w[gisaid_data_w$location == location, ]
+
+  # Creating peaks
+  cases <- region_owid$weekly_cases
+  cases[is.na(cases)] <- 0
+  cases[is.nan(cases)] <- 0
+
+  peaks <- find_peaks(cases, tolerance = 4)
+  valleys <- find_valleys(cases, peaks)
+
+  # aesthetics
+  noepiweeks <- 6 # number of epi weeks in proportions plot
+  ticks <- "1 month" # 2 months = cadence of ticks (by month)
+
+  # - variant data
+  region_gisaid %>%
+    dplyr::select(week, VOC, proportion) %>%
+    filter(week > mindate) %>% filter(week < maxepidate) %>% # cut sequences found before 1st date of weekly_cases
+    filter(!is.na(week)) -> dfin # remove weeks with NAs
+  as.data.frame(dfin) -> dfprop # flatten
+
+  dfprop %>% complete(week, VOC, fill = list(proportion = 0)) -> dfprop2 # fill in missing weeks with zero values
+
+  dfprop2 %>%
+    group_by(week, VOC) %>%
+    dplyr::summarise(across(everything(), sum), .groups = "keep") -> dfprop3 
+  # sum props and mult of same VOC
+  # note, had to include ".groups = keep" to suppress grouping message from knit.
+
+  merge(dfprop3, region_owid, all.x = T) -> dfplot # merge dfs
+
+  dfplot$mult <- dfplot$weekly_cases * as.numeric(dfplot$proportion) # n*proportion  -> for plotting
+  
+  # Find date of first week for which BA.2 prop is >0.1
+  endd <- dfplot %>% filter(VOC==var) %>% filter(proportion > 0.1) %>% 
+    summarize(First = min(week))
+  # Generate the successive weeks backward
+  dates[dates$country==location,2] <- endd$First
+  dates[dates$country==location,3] <- endd$First - 7
+  dates[dates$country==location,4] <- endd$First - 14
+  dates[dates$country==location,5] <- endd$First - 21
+  dates[dates$country==location,6] <- endd$First - 28
+  
+}
+
+print("Creating end dates table and saving to file...")
+
+
+
+# Save the CSV
+write_csv(dates, outfile)
+
+```
+
+
+Lastly we plot those dates on top of the variant case curves. 
+
+* Waves as identified by Nathan's script are bounded by red lines
+* Red dots identify wave peaks.
+* Black lines indicate the final data point included in the data set for prediction. We also include 4 earlier data points, taken 1 week incrementally backwards from the black line.
+* White space indicates there is no sequencing data for that time
+
+
+```{r}
+
+plots1 <- list() # create empty list to store plots
+
+
+for (location in my_regions) {
+  # Subset data by region
+  region_owid <- owid_data_w[owid_data_w$location == location, ]
+  region_gisaid <- gisaid_data_w[gisaid_data_w$location == location, ]
+
+
+  # Creating peaks
+  cases <- region_owid$weekly_cases
+
+  cases[is.na(cases)] <- 0
+  cases[is.nan(cases)] <- 0
+
+  peaks <- find_peaks(cases, tolerance = 4)
+
+  valleys <- find_valleys(cases, peaks)
+
+
+  # - variant data
+
+  region_gisaid %>%
+    dplyr::select(week, VOC, proportion) %>%
+    filter(week > mindate) %>% filter(week < maxepidate) %>%
+    filter(!is.na(week)) -> dfin 
+  as.data.frame(dfin) -> dfprop 
+
+  dfprop %>% complete(week, VOC, fill = list(proportion = 0)) -> dfprop2
+
+  dfprop2 %>%
+    group_by(week, VOC) %>%
+    dplyr::summarise(across(everything(), sum), .groups = "keep") -> dfprop3 
+
+  merge(dfprop3, region_owid, all.x = T) -> dfplot # merge dfs
+
+  dfplot$mult <- dfplot$weekly_cases * as.numeric(dfplot$proportion) # n*proportion  -> for plotting
+
+  # Plotting:
+  # Large VD plot
+  p <- ggplot() +
+    geom_area(data = dfplot, aes(x = as.Date(week), y = mult, fill = VOC)) +
+    geom_line(data = region_owid, aes(x = as.Date(week), y = weekly_cases), size = 0.75) + 
+    xlim(as.Date(mindate), as.Date(maxepidate)) +
+    scale_fill_manual(breaks = names(pal), values = pal) +
+    geom_point(data = region_owid[peaks, ], aes(x = week, y = weekly_cases), color = "red") +
+    geom_vline(data = region_owid[valleys, ], aes(xintercept = week), color = "red", alpha = 0.2) +
+    geom_vline(xintercept = dates[dates$country==location,2]$end_date, lwd=1) +
+    geom_vline(xintercept = dates[dates$country==location,3]$wk4, lwd=0.5) +
+    geom_vline(xintercept = dates[dates$country==location,4]$wk3, lwd=0.5) +
+    geom_vline(xintercept = dates[dates$country==location,5]$wk2, lwd=0.5) +
+    geom_vline(xintercept = dates[dates$country==location,6]$wk1, lwd=0.5) +
+    labs(
+      x = NULL,
+      y = "weekly case counts",
+      title = location,
+      # subtitle = "subtitle", #add a subtitle here if wanted
+      caption = "Notes: Weekly case counts and lineage proportions. Data sources: OWID, GISAID"
+    ) +
+    theme_classic() +
+    theme(
+      plot.caption = element_text(size = 6, hjust = 0, face = "italic"),
+      plot.title.position = "plot",
+      plot.caption.position = "plot",
+      legend.title = element_blank(),
+      legend.text = element_text(size = 7),
+      legend.position = "bottom",
+      axis.text = element_text(size = 10),
+      plot.title = element_text(size = 17, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    ) +
+    scale_y_continuous(name = "Cases", labels = comma) 
+
+  plots1[[location]] <- p # save each new plot to the index of location in the plots list
+}
+
+
+
+pl_list <- list() # create empty list to store plots and labels
+for (location in my_regions) {
+  pl_list[[location]] <- list(plots1[[location]], location) # create new list with each element containing a plot and a title to print in tabs
+}
+
+# note, this only works with chunk option set with results = "asis"
+for (location in my_regions) {
+  tmp <- pl_list[[location]]
+  #catHeader(tmp[[2]], 2) # this uses the second item in tmp as the title, and uses the second header level
+  lapply(tmp[1], print) # this prints the first item in tmp
+}
+```

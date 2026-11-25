@@ -1,0 +1,89 @@
+"country","segment","test_unique_mean"
+"Croatia","S",6.4
+"Croatia","total",27.1
+"Poland","S",6.4
+"Poland","total",27.8
+"Russia","S",6.2
+"Russia","total",27.3
+"South Korea","S",5.8
+"South Korea","total",27.3
+"Bulgaria","S",6.9
+"Bulgaria","total",28.3
+"Luxembourg","S",6.2
+"Luxembourg","total",27.2
+"Slovakia","S",6.4
+"Slovakia","total",29.7
+"Slovenia","S",6.3
+"Slovenia","total",28.9
+"Brazil","S",5.6
+"Brazil","total",28
+"Colombia","S",5.3
+"Colombia","total",27
+"Costa Rica","S",6.2
+"Costa Rica","total",27.5
+"Denmark","S",6.2
+"Denmark","total",28.2
+"Germany","S",5.7
+"Germany","total",27.5
+"India","S",5.6
+"India","total",26.9
+"Indonesia","S",6.7
+"Indonesia","total",27.5
+"Italy","S",6.3
+"Italy","total",28.6
+"Malaysia","S",6.8
+"Malaysia","total",27.7
+"Mexico","S",6.1
+"Mexico","total",26.5
+"Netherlands","S",6.3
+"Netherlands","total",27.4
+"USA","S",5.9
+"USA","total",26.2
+"Panama","S",6.5
+"Panama","total",28.8
+"Peru","S",6.1
+"Peru","total",28.5
+"Portugal","S",5.9
+"Portugal","total",28.4
+"Singapore","S",6.2
+"Singapore","total",23
+"Sweden","S",6.2
+"Sweden","total",27.8
+"Switzerland","S",5.8
+"Switzerland","total",28
+"Thailand","S",5.8
+"Thailand","total",28.3
+"Argentina","S",5.9
+"Argentina","total",27.1
+"Australia","S",6
+"Australia","total",25.5
+"Belgium","S",6.2
+"Belgium","total",28.4
+"Canada","S",6.4
+"Canada","total",27.7
+"Chile","S",5.5
+"Chile","total",27.6
+"United Kingdom","S",6.9
+"United Kingdom","total",28.9
+"Finland","S",6.8
+"Finland","total",29.4
+"France","S",6.5
+"France","total",29
+"Ireland","S",6.4
+"Ireland","total",28.3
+"Israel","S",6.2
+"Israel","total",28.7
+"Japan","S",6.4
+"Japan","total",28.7
+"Puerto Rico","S",6.1
+"Puerto Rico","total",29.4
+"Romania","S",5.8
+"Romania","total",27.8
+"Spain","S",6.4
+"Spain","total",28.9
+"Austria","S",6.4
+"Austria","total",29.3
+"Norway","S",6.6
+"Norway","total",29.6
+"South Africa","S",5.4
+"South Africa","total",25.6

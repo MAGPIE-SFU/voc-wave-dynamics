@@ -1,0 +1,306 @@
+---
+title: "Random forest models"
+author: "Shab Molan"
+output: pdf_document
+params:
+  analysis: "main" # "main", "oecd" or "dynamic"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(mice)
+library(randomForest)
+```
+
+```{r load data}
+countries    <- read.csv("../../data/42_countries.csv", stringsAsFactors = FALSE)
+new_countries <- data.frame(Country = c("India", "Singapore"))
+countries    <- rbind(countries, new_countries)
+BA1BA2       <- read.csv("../../data/44countriesBA1BA2_May_07.csv")
+DeltaBA1     <- read.csv("../../data/44countriesDeltaBA1_May_07.csv")
+relsize      <- read.csv("../../data/relsize_v4.csv")
+s            <- read.csv("../../data/sel_coef.csv")
+wave_metrics <- read.csv("../../data/wave_metrics.csv")
+gendist_BA1  <- read.csv("../../data/gendist_BA1.csv")
+gendist_BA2  <- read.csv("../../data/gendist_BA2.csv")
+diversity_df <- read.csv("../../data/diversity_df.csv")
+
+relsize$country       <- gsub("USA", "United States", relsize$country)
+s$region              <- gsub("USA", "United States", s$region )
+wave_metrics$location <- gsub("USA", "United States", wave_metrics$location)
+gendist_BA1$country   <- gsub("USA", "United States", gendist_BA1$country)
+gendist_BA2$country   <- gsub("USA", "United States", gendist_BA2$country)
+diversity_df$location <- gsub("USA", "United States", diversity_df$location)
+```
+
+```{r richness and diversity update}
+# Merge the dataframes based on matching columns
+merged_df <- BA1BA2 %>%
+  left_join(diversity_df, by = c("country" = "location", "Day" = "week"))
+  
+# Replace the columns in BA1BA2 with the values from diversity_df
+BA1BA2$richness <- merged_df$richness.y
+BA1BA2$diversity <- merged_df$diversity.y
+
+# Merge the dataframes based on matching columns
+merged_df <- DeltaBA1 %>%
+  left_join(diversity_df, by = c("country" = "location", "Day" = "week"))
+  
+# Replace the columns in DeltaBA1 with the values from diversity_df
+DeltaBA1$richness <- merged_df$richness.y
+DeltaBA1$diversity <- merged_df$diversity.y
+```
+
+```{r days from last peak}
+# Start of each country's window: the 5th row of its five weeks (t-4)
+rowIndices <- seq(from = 5, to = 220, by = 5)
+startDates <- function(df) setNames(as.Date(df[rowIndices, "Day"]), df[rowIndices, "country"])
+BA1_start_date <- startDates(DeltaBA1)
+BA2_start_date <- startDates(BA1BA2)
+
+# Days from the last wave peak before the start date, looked up by country name
+daysFromLastPeak <- function(start_dates) {
+  sapply(names(start_dates), function(location) {
+    peaks <- as.Date(wave_metrics$wave_peak[wave_metrics$location == location])
+    peaks <- peaks[peaks < start_dates[[location]]]
+    if (length(peaks) == 0) NA else as.numeric(start_dates[[location]] - max(peaks))
+  })
+}
+DeltaBA1$days_from_last_peak <- unname(daysFromLastPeak(BA1_start_date)[DeltaBA1$country])
+BA1BA2$days_from_last_peak   <- unname(daysFromLastPeak(BA2_start_date)[BA1BA2$country])
+```
+
+```{r # of variants at last date}
+subsetData <- DeltaBA1[rowIndices, 107:128]
+number_of_variants <- apply(subsetData, 1, function(row) sum(row != 0))
+number_of_variants <- rep(number_of_variants, each = 5)
+DeltaBA1 <- cbind(DeltaBA1, number_of_variants)
+
+subsetData <- BA1BA2[rowIndices, 107:128]
+number_of_variants <- apply(subsetData, 1, function(row) sum(row != 0))
+number_of_variants <- rep(number_of_variants, each = 5)
+BA1BA2 <- cbind(BA1BA2, number_of_variants)
+```
+
+```{r s}
+s_BA1 <- s[s$focal == "Omicron BA.1*", ]
+s_BA2 <-  s[s$focal == "Omicron BA.2*", ]
+
+DeltaBA1$sel_coeff <- s_BA1$s_perday[match(DeltaBA1$country, s_BA1$region)]
+BA1BA2$sel_coeff   <- s_BA2$s_perday[match(BA1BA2$country, s_BA2$region)]
+```
+
+```{r relsize}
+rowsDeltaBA1 <- match(DeltaBA1$country, relsize$country)
+rowsBA1BA2   <- match(BA1BA2$country, relsize$country)
+DeltaBA1$relsize <- relsize$relsize_BA1[rowsDeltaBA1]
+if (params$analysis == "dynamic") {
+  BA1BA2$relsize <- log(relsize$relsize_dynamic[rowsBA1BA2])
+} else {
+  BA1BA2$relsize <- relsize$relsize_BA2[rowsBA1BA2]
+}
+```
+
+```{r genetic distance}
+addgendist <- function(df, gendist) {
+  g <- gendist %>%
+  pivot_wider(names_from = segment, values_from = test_unique_mean) %>%
+  rename(s_gene = S)
+  df$s_gene <- g$s_gene[match(df$country, g$country)]
+  df$total  <- g$total[match(df$country, g$country)]
+  df
+}
+
+DeltaBA1 <- addgendist(DeltaBA1, gendist_BA1)
+BA1BA2 <- addgendist(BA1BA2, gendist_BA2)
+```
+
+```{r filter features}
+features <- c("country", 
+              "total_cases_per_million", "new_cases_per_million", 
+              "total_deaths_per_million", "new_deaths_per_million",
+              "reproduction_rate", "icu_patients_per_million",
+              "hosp_patients_per_million", "new_tests_smoothed_per_thousand",
+              "positive_rate", "new_vaccinations_smoothed_per_million",
+              "new_people_vaccinated_smoothed_per_hundred",
+              "stringency_index", "population_density", "median_age",
+              "gdp_per_capita", "cardiovasc_death_rate", "diabetes_prevalence",
+              "hospital_beds_per_thousand", "life_expectancy", 
+              "human_development_index", "population", "excess_mortality",
+              "excess_mortality_cumulative_per_million", 
+              "residential", "workplaces", "parks", "transit_stations", 
+              "grocery_and_pharmacy", "retail_and_recreation", "latitude",
+              "longitude", "Season", "Nucleocapsid..N.protein..Multiple.groups",
+              "Nucleocapsid..N.protein...Spike.Multiple.groups",
+              "Spike.Multiple.groups", "richness", "diversity", "sel_coeff", 
+              "s_gene", "total", "days_from_last_peak", "number_of_variants",
+              "extreme_poverty", "male_smokers", "female_smokers", "relsize")
+
+DeltaBA1 <- DeltaBA1 %>% select(all_of(features))
+BA1BA2 <- BA1BA2 %>% select(all_of(features))
+```
+
+```{r remove Puerto Rico}
+DeltaBA1 <- DeltaBA1 %>% 
+  filter(country != "Puerto Rico")
+
+BA1BA2 <- BA1BA2 %>% 
+  filter(country != "Puerto Rico")
+```
+
+```{r Filter for OECD, eval = params$analysis == "oecd"}
+## only run for OECD analysis
+
+oecdCountries <- c("Australia", "Austria", "Belgium", "Canada", "Chile", 
+                   "Colombia", "Denmark", "Finland", "France", "Germany", 
+                   "Ireland", "Israel", "Italy", "Japan", "Luxembourg", 
+                   "Mexico", "Netherlands", "Norway", "Poland", "Portugal", 
+                   "Spain", "Sweden", "Switzerland", "United Kingdom", 
+                   "United States")
+
+DeltaBA1 <- DeltaBA1 %>%
+  filter(country %in% oecdCountries)
+
+BA1BA2 <- BA1BA2 %>%
+  filter(country %in% oecdCountries)
+```
+
+
+```{r imputation}
+performImputation <- function(dataFrame, targetColumn, numImputations, clusterCol) {
+  # Ensure the cluster column is a factor
+  dataFrame[[clusterCol]] <- as.factor(dataFrame[[clusterCol]])
+
+  # Replace problematic characters in column names
+  names(dataFrame) <- make.names(names(dataFrame))
+
+  # Identifying columns with missing values, excluding the target column
+  naCols <- setdiff(names(dataFrame)[sapply(dataFrame, function(x) any(is.na(x)))], targetColumn)
+
+  # Subset the dataframe for imputation, excluding the target column
+  subsetDataFrame <- dataFrame[, naCols]
+
+  # Perform imputation using 'pmm' (predictive mean matching), excluding the target column
+  imputedData <- mice(subsetDataFrame, m = numImputations, method = 'pmm', printFlag = FALSE)
+  
+  # Create a list to store imputed data frames
+  imputedDataList <- vector("list", numImputations)
+
+  # Loop through each imputed dataset
+  for (i in 1:numImputations) {
+    # Obtain complete data for each imputation
+    tempImputedData <- complete(imputedData, action = i)
+    # Combine original data and imputed data, excluding the target column from being overwritten
+    tempDataFrame <- dataFrame
+    tempDataFrame[, naCols] <- tempImputedData[, naCols]
+    # Store in the list
+    imputedDataList[[i]] <- tempDataFrame
+  }
+
+  return(imputedDataList)
+}
+
+set.seed(123)
+
+if (params$analysis != "dynamic") {
+  DeltaBA1 <- performImputation(DeltaBA1, "relsize", 30, "country")
+}
+BA1BA2 <- performImputation(BA1BA2, "relsize", 30, "country")
+```
+
+```{r categorical variables preprocessing}
+createDummyVariable <- function(dataFrame, columnName) {
+  # Convert the specified column to a factor
+  dataFrame[[columnName]] <- factor(dataFrame[[columnName]])
+  # Construct the formula
+  formulaString <- paste("~", columnName, "- 1")
+  formulaObject <- as.formula(formulaString)
+  # Create dummy variables
+  dummyVars <- as.data.frame(model.matrix(formulaObject, dataFrame))
+  # Bind the dummy variables to the original DataFrame
+  dataFrame <- cbind(dataFrame, dummyVars)
+  # Remove the original column
+  dataFrame[[columnName]] <- NULL
+  return(dataFrame)
+}
+
+applyDummyVariablesToList <- function(dataList, columnName) {
+  lapply(dataList, createDummyVariable, columnName = columnName)
+}
+
+
+if (params$analysis != "dynamic") {
+  DeltaBA1 <- applyDummyVariablesToList(DeltaBA1, "Season")
+}
+BA1BA2 <- applyDummyVariablesToList(BA1BA2, "Season")
+```
+
+```{r LOOCV RF}
+leaveOneCountryOutCV <- function(imputedDataList) {
+  uniqueCountries <- unique(imputedDataList[[1]]$country)  
+  results <- list()
+
+  for (country in uniqueCountries) {
+    # Initialize an empty list to store predictions for each imputed dataset
+    allPredictions <- list()
+    featureImportances <- list()
+
+    # Iterate over each imputed dataset
+    for (dataFrame in imputedDataList) {
+      # Split data into training (all but one country) and testing (one country)
+      trainData <- dataFrame[dataFrame$country != country, ]
+      testData <- dataFrame[dataFrame$country == country, ]
+
+      # Train the model on training data
+      model <- randomForest(relsize ~ . - country, data = trainData, 
+                            importance = TRUE, ntree = 10000)
+
+      # Make predictions on test data
+      allPredictions[[length(allPredictions) + 1]] <- predict(model, newdata = testData)
+      
+      # Store feature importance
+      featureImportances[[length(featureImportances) + 1]] <- importance(model)
+    }
+
+    # Combine results
+    resultsPerImputation <- lapply(allPredictions, function(preds) {
+      data.frame(predictions = preds)
+    })
+    
+    # Aggregate predictions across all imputations
+    aggregatedPredictions <- rowMeans(do.call(cbind, allPredictions))
+    
+    # Calculate the mean of the 5 points in aggregatedPredictions
+    overalMean <- mean(aggregatedPredictions)
+    
+    # Aggregate feature importance across all imputations
+    aggregatedImportance <- Reduce("+", featureImportances) / length(featureImportances)
+    
+    
+    # Store all results
+    results[[country]] <- list(actuals = testData$relsize,
+                               overalMean = overalMean,
+                               perImputation = resultsPerImputation, 
+                               aggregated = aggregatedPredictions,
+                               featureImportance = aggregatedImportance)
+  }
+
+  return(results)
+}
+
+
+if (params$analysis != "dynamic") {
+  resultsLOOCVDeltaBA1 <- leaveOneCountryOutCV(DeltaBA1)
+}
+resultsLOOCVBA1BA2 <- leaveOneCountryOutCV(BA1BA2)
+```
+
+```{r save results}
+out <- switch(params$analysis,
+              main    = "../../results/V1_43/V1_43.RData",
+              oecd    = "../../results/V1_OECD/V1_OECD.RData",
+              dynamic = "../../results/Dynamic_log/Dynamic_log.RData")
+save.image(file = out)
+```

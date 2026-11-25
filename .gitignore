@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# R and Jupyter session files
+.Rhistory
+.RData
+.Rproj.user/
+.ipynb_checkpoints/
+
+# knitr intermediates
+*.knit.md
+*_files/
+
+# by-products of running the scripts, not results
+Rplots.pdf
+scripts/**/*.html
+scripts/**/*.pdf
+results/map/map.pdf
+results/*/Results.pdf

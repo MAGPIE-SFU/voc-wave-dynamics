@@ -1,0 +1,130 @@
+---
+title: "Country-Level Means from covid_processed_v10_march14.zip"
+author: ""
+knit: (function(input, ...) rmarkdown::render(input, output_dir = file.path(dirname(input), "../../results/tables")))
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(dplyr)
+library(readr)
+library(knitr)
+```
+
+## Load Data from ZIP
+
+```{r load-data}
+zip_path <- "../../data/covid_processed_v10_march14.zip"
+
+zip_contents <- utils::unzip(zip_path, list = TRUE)
+csv_name <- zip_contents$Name[grepl("\\.csv$", zip_contents$Name)][1]
+
+if (is.na(csv_name)) {
+  stop("No CSV file found inside the ZIP archive.")
+}
+
+extract_dir <- tempdir()
+utils::unzip(zip_path, files = csv_name, exdir = extract_dir, overwrite = TRUE)
+csv_path <- file.path(extract_dir, csv_name)
+
+df <- readr::read_csv(csv_path, show_col_types = FALSE)
+```
+
+## Build One Row per Country
+
+The source is a time series, so these country-level covariates appear repeatedly. To ensure each country contributes once to group means, we collapse to one row per country.
+
+```{r country-level}
+vars <- c(
+  "gdp_per_capita",
+  "human_development_index",
+  "extreme_poverty",
+  "hospital_beds_per_thousand"
+)
+
+one_value_per_country <- function(x) {
+  vals <- unique(x[!is.na(x)])
+  if (length(vals) == 0) {
+    return(NA_real_)
+  }
+  mean(vals)
+}
+
+country_level <- df %>%
+  filter(!is.na(continent), continent != "", !is.na(country), country != "") %>%
+  group_by(country) %>%
+  summarise(
+    across(all_of(vars), one_value_per_country),
+    .groups = "drop"
+  )
+```
+
+## Country Groups
+
+```{r groups}
+countries_list_1 <- c(
+  "Argentina", "Australia", "Austria", "Belgium", "Brazil", "Bulgaria", "Canada", "Chile",
+  "Colombia", "Costa Rica", "Croatia", "Denmark", "Finland", "France", "Germany", "India",
+  "Indonesia", "Ireland", "Israel", "Italy", "Japan", "Luxembourg", "Malaysia", "Mexico",
+  "Netherlands", "Norway", "Panama", "Peru", "Poland", "Portugal", "Romania", "Russia",
+  "Singapore", "Slovakia", "Slovenia", "South Africa", "South Korea", "Spain", "Sweden",
+  "Switzerland", "Thailand", "United Kingdom", "United States"
+)
+
+countries_list_2 <- c(
+  "Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia", "Denmark", "Finland",
+  "France", "Germany", "Ireland", "Israel", "Italy", "Japan", "Luxembourg", "Mexico",
+  "Netherlands", "Norway", "Poland", "Portugal", "Spain", "Sweden", "Switzerland",
+  "United Kingdom", "United States"
+)
+```
+
+## Compute Mean Table
+
+```{r summary-table}
+safe_mean <- function(x) {
+  if (all(is.na(x))) {
+    return(NA_real_)
+  }
+  mean(x, na.rm = TRUE)
+}
+
+compute_group_means <- function(country_df, group_name, countries = NULL) {
+  selected <- if (is.null(countries)) {
+    country_df
+  } else {
+    country_df %>% filter(country %in% countries)
+  }
+
+  tibble(
+    Group = group_name,
+    Countries_included = dplyr::n_distinct(selected$country),
+    gdp_per_capita = safe_mean(selected$gdp_per_capita),
+    human_development_index = safe_mean(selected$human_development_index),
+    extreme_poverty = safe_mean(selected$extreme_poverty),
+    hospital_beds_per_thousand = safe_mean(selected$hospital_beds_per_thousand)
+  )
+}
+
+summary_table <- bind_rows(
+  compute_group_means(country_level, "1) Global (all countries in dataset)"),
+  compute_group_means(country_level, "2) First country list", countries_list_1),
+  compute_group_means(country_level, "3) Second country list", countries_list_2)
+)
+
+summary_table %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3))) %>%
+  rename(
+    `GDP per capita` = gdp_per_capita,
+    `Human development index` = human_development_index,
+    `Extreme poverty` = extreme_poverty,
+    `Hospital beds per thousand` = hospital_beds_per_thousand
+  ) %>%
+  knitr::kable(align = "lrrrrr")
+```
