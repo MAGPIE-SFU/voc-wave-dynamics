@@ -75,4 +75,4 @@ The funders had no role in study design, data collection and analysis, decision 
 ## Licence and citation:
 - Code is MIT (see `LICENSE`)
 - Data follow [DATA_LICENSES.md](DATA_LICENSES.md)
-- How to Cite: "To be filled"
+- How to Cite:

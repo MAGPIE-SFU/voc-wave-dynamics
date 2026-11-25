@@ -17,3 +17,16 @@ scripts/**/*.html
 scripts/**/*.pdf
 results/map/map.pdf
 results/*/Results.pdf
+results/V1_43/BA1Delta_RF.pdf
+results/V1_43/BA2BA1_RF.pdf
+results/V1_43/quadrant_log_plot_*.pdf
+results/V1_43/feature_importance_heatmap.pdf
+results/V1_OECD/BA1Delta_RF_OECD.pdf
+results/V1_OECD/BA2BA1_RF_OECD.pdf
+results/V1_OECD/quadrant_log_plot_*.pdf
+results/Dynamic_log/BA2BA1_RF_*.pdf
+results/Dynamic_log/quadrant_log_plot_*.pdf
+results/figures/missing_fulldata.pdf
+results/figures/missing_oecddata.pdf
+results/map/missing_heatmap*.pdf
+results/tables/covid_means_march14.html
