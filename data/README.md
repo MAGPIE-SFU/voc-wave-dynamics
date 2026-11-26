@@ -1,6 +1,4 @@
 # Generated Data:
-
-Data Files that have been generated after using the scripts.
  
 Latest version of the main data is contained in the covid_processed_v10_march14.zip, which holds the master dataset df_ver_10_March_14.csv. Data dictionary for this dataset can be found in Documentation_Ver_10.0.pdf. This dataset can be transformed, filtered or sliced to perform analysis. 
 
